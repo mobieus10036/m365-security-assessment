@@ -4,7 +4,8 @@
 
 .DESCRIPTION
     Validates email authentication records for domain security and
-    anti-spoofing protection.
+    anti-spoofing protection. Performs actual DNS lookups to validate
+    SPF and DMARC records.
 
 .PARAMETER Config
     Configuration object.
@@ -14,7 +15,8 @@
 
 .NOTES
     Author: M365 Assessment Toolkit
-    Version: 1.0
+    Version: 2.0
+    Updated: 2025-11-09 - Added DNS validation for SPF and DMARC
 #>
 
 function Test-SPFDKIMDmarc {
@@ -27,8 +29,8 @@ function Test-SPFDKIMDmarc {
     try {
         Write-Verbose "Analyzing SPF, DKIM, DMARC configuration..."
 
-        # Get accepted domains
-        $domains = Get-AcceptedDomain -ErrorAction SilentlyContinue
+        # Get accepted domains (exclude internal relay domains)
+        $domains = Get-AcceptedDomain -ErrorAction SilentlyContinue | Where-Object { $_.DomainType -ne 'InternalRelay' }
         
         if ($null -eq $domains) {
             return [PSCustomObject]@{
@@ -44,40 +46,157 @@ function Test-SPFDKIMDmarc {
             }
         }
 
-        # Check DKIM configuration
-        $dkimConfigs = Get-DkimSigningConfig -ErrorAction SilentlyContinue
-        $enabledDkimDomains = @($dkimConfigs | Where-Object { $_.Enabled -eq $true })
-        $dkimCount = $enabledDkimDomains.Count
-
+        # Initialize counters
         $totalDomains = @($domains).Count
-        $dkimPercentage = if ($totalDomains -gt 0) {
-            [math]::Round(($dkimCount / $totalDomains) * 100, 1)
-        } else { 0 }
-
-        # Determine status
-        $status = "Pass"
-        $severity = "Low"
+        $spfValid = 0
+        $spfMissing = 0
+        $spfInvalid = 0
+        $dmarcValid = 0
+        $dmarcMissing = 0
+        $dmarcWeak = 0
+        $dkimEnabled = 0
+        
+        $domainDetails = @()
         $issues = @()
 
-        if ($dkimCount -eq 0) {
+        # Check each domain
+        foreach ($domain in $domains) {
+            $domainName = $domain.DomainName
+            Write-Verbose "Checking domain: $domainName"
+            
+            $domainResult = [PSCustomObject]@{
+                Domain = $domainName
+                SPF = "Not Checked"
+                SPFRecord = ""
+                DKIM = "Not Checked"
+                DMARC = "Not Checked"
+                DMARCRecord = ""
+                DMARCPolicy = ""
+            }
+
+            # Check SPF
+            try {
+                $spfRecord = Resolve-DnsName -Name $domainName -Type TXT -ErrorAction SilentlyContinue | 
+                    Where-Object { $_.Strings -like "v=spf1*" } | 
+                    Select-Object -First 1
+                
+                if ($spfRecord) {
+                    $spfString = $spfRecord.Strings -join ""
+                    $domainResult.SPFRecord = $spfString
+                    
+                    # Validate SPF includes Microsoft
+                    if ($spfString -match "include:spf\.protection\.outlook\.com" -or 
+                        $spfString -match "include:spf\.protection\.office365\.com") {
+                        $domainResult.SPF = "Valid"
+                        $spfValid++
+                    }
+                    else {
+                        $domainResult.SPF = "Invalid (Missing Microsoft)"
+                        $spfInvalid++
+                        $issues += "$domainName - SPF exists but doesn't include Microsoft servers"
+                    }
+                }
+                else {
+                    $domainResult.SPF = "Missing"
+                    $spfMissing++
+                    $issues += "$domainName - No SPF record found"
+                }
+            }
+            catch {
+                $domainResult.SPF = "DNS Lookup Failed"
+                Write-Verbose "SPF lookup failed for $domainName : $_"
+            }
+
+            # Check DKIM
+            try {
+                $dkimConfig = Get-DkimSigningConfig -Identity $domainName -ErrorAction SilentlyContinue
+                if ($dkimConfig -and $dkimConfig.Enabled) {
+                    $domainResult.DKIM = "Enabled"
+                    $dkimEnabled++
+                }
+                else {
+                    $domainResult.DKIM = "Disabled"
+                    $issues += "$domainName - DKIM not enabled"
+                }
+            }
+            catch {
+                $domainResult.DKIM = "Check Failed"
+                Write-Verbose "DKIM check failed for $domainName : $_"
+            }
+
+            # Check DMARC
+            try {
+                $dmarcDomain = "_dmarc.$domainName"
+                $dmarcRecord = Resolve-DnsName -Name $dmarcDomain -Type TXT -ErrorAction SilentlyContinue | 
+                    Where-Object { $_.Strings -like "v=DMARC1*" } | 
+                    Select-Object -First 1
+                
+                if ($dmarcRecord) {
+                    $dmarcString = $dmarcRecord.Strings -join ""
+                    $domainResult.DMARCRecord = $dmarcString
+                    
+                    # Extract policy
+                    if ($dmarcString -match "p=([^;]+)") {
+                        $policy = $matches[1]
+                        $domainResult.DMARCPolicy = $policy
+                        
+                        if ($policy -eq "reject" -or $policy -eq "quarantine") {
+                            $domainResult.DMARC = "Valid (Policy: $policy)"
+                            $dmarcValid++
+                        }
+                        else {
+                            $domainResult.DMARC = "Weak (Policy: $policy)"
+                            $dmarcWeak++
+                            $issues += "$domainName - DMARC policy is weak ($policy)"
+                        }
+                    }
+                    else {
+                        $domainResult.DMARC = "Invalid Format"
+                        $dmarcMissing++
+                    }
+                }
+                else {
+                    $domainResult.DMARC = "Missing"
+                    $dmarcMissing++
+                    $issues += "$domainName - No DMARC record found"
+                }
+            }
+            catch {
+                $domainResult.DMARC = "DNS Lookup Failed"
+                Write-Verbose "DMARC lookup failed for $domainName : $_"
+            }
+
+            $domainDetails += $domainResult
+        }
+
+        # Calculate percentages
+        $spfPercentage = if ($totalDomains -gt 0) { [math]::Round(($spfValid / $totalDomains) * 100, 1) } else { 0 }
+        $dkimPercentage = if ($totalDomains -gt 0) { [math]::Round(($dkimEnabled / $totalDomains) * 100, 1) } else { 0 }
+        $dmarcPercentage = if ($totalDomains -gt 0) { [math]::Round(($dmarcValid / $totalDomains) * 100, 1) } else { 0 }
+
+        # Determine overall status
+        $status = "Pass"
+        $severity = "Low"
+
+        if ($spfMissing -gt 0 -or $dmarcMissing -gt 0 -or $dkimEnabled -eq 0) {
             $status = "Fail"
             $severity = "High"
-            $issues += "DKIM not enabled for any domains"
         }
-        elseif ($dkimPercentage -lt 100) {
+        elseif ($spfInvalid -gt 0 -or $dmarcWeak -gt 0 -or $dkimEnabled -lt $totalDomains) {
             $status = "Warning"
             $severity = "Medium"
-            $issues += "DKIM not enabled for all domains ($dkimPercentage%)"
         }
 
-        $message = "DKIM enabled for $dkimCount/$totalDomains domains"
-        
-        # Note: SPF and DMARC are DNS records - can't check directly via PowerShell
-        $message += ". Note: SPF and DMARC require DNS validation (manual check recommended)"
+        # Build summary message
+        $message = "Email Authentication Status: "
+        $message += "SPF Valid: $spfValid/$totalDomains ($spfPercentage%), "
+        $message += "DKIM Enabled: $dkimEnabled/$totalDomains ($dkimPercentage%), "
+        $message += "DMARC Enforced: $dmarcValid/$totalDomains ($dmarcPercentage%)"
 
-        if ($issues.Count -gt 0) {
-            $message += ". Issues: $($issues -join '; ')"
-        }
+        if ($spfMissing -gt 0) { $message += " | $spfMissing domain(s) missing SPF" }
+        if ($spfInvalid -gt 0) { $message += " | $spfInvalid domain(s) have invalid SPF" }
+        if ($dmarcMissing -gt 0) { $message += " | $dmarcMissing domain(s) missing DMARC" }
+        if ($dmarcWeak -gt 0) { $message += " | $dmarcWeak domain(s) have weak DMARC policy" }
 
         return [PSCustomObject]@{
             CheckName = "Email Authentication (SPF/DKIM/DMARC)"
@@ -87,23 +206,37 @@ function Test-SPFDKIMDmarc {
             Message = $message
             Details = @{
                 TotalDomains = $totalDomains
-                DKIMEnabledDomains = $dkimCount
+                SPFValid = $spfValid
+                SPFMissing = $spfMissing
+                SPFInvalid = $spfInvalid
+                SPFPercentage = $spfPercentage
+                DKIMEnabled = $dkimEnabled
                 DKIMPercentage = $dkimPercentage
-                DomainsWithoutDKIM = @($dkimConfigs | Where-Object { $_.Enabled -ne $true }).Count
+                DMARCValid = $dmarcValid
+                DMARCMissing = $dmarcMissing
+                DMARCWeak = $dmarcWeak
+                DMARCPercentage = $dmarcPercentage
+                DomainDetails = $domainDetails
+                Issues = $issues
             }
-            Recommendation = if ($status -ne "Pass") {
-                "Enable DKIM for all domains. Verify SPF and DMARC DNS records for each domain."
+            DomainDetails = $domainDetails
+            Recommendation = if ($status -eq "Pass") {
+                "All domains have proper email authentication configured. Continue monitoring DMARC reports."
+            } elseif ($status -eq "Warning") {
+                "Some domains need attention. Review domain details and strengthen policies where needed."
             } else {
-                "DKIM is enabled. Manually verify SPF (TXT record) and DMARC (TXT record) in DNS for all domains."
+                "Critical: Multiple domains are missing email authentication. Implement SPF, DKIM, and DMARC immediately to prevent spoofing."
             }
-            DocumentationUrl = "https://learn.microsoft.com/defender-office-365/email-authentication-dkim-configure"
+            DocumentationUrl = "https://learn.microsoft.com/defender-office-365/email-authentication-about"
             RemediationSteps = @(
                 "SPF: Add TXT record 'v=spf1 include:spf.protection.outlook.com -all' to domain DNS"
                 "DKIM: Enable DKIM signing in Exchange admin center for each domain"
-                "DKIM: Add CNAME records provided by Microsoft to domain DNS"
-                "DMARC: Add TXT record '_dmarc' with policy (start with p=none for monitoring)"
-                "Monitor DMARC reports to identify authentication issues"
-                "Gradually enforce DMARC policy (p=quarantine, then p=reject)"
+                "DKIM: Add CNAME records (selector1._domainkey and selector2._domainkey) provided by Microsoft to domain DNS"
+                "DMARC: Add TXT record '_dmarc' with policy (start with 'v=DMARC1; p=none; rua=mailto:dmarc@yourdomain.com' for monitoring)"
+                "Monitor DMARC reports for 2-4 weeks to identify legitimate sources"
+                "Gradually enforce DMARC policy: Update to 'p=quarantine' for 2-4 weeks"
+                "Final enforcement: Update to 'p=reject' once all legitimate sources are verified"
+                "Documentation: https://learn.microsoft.com/defender-office-365/email-authentication-dmarc-configure"
             )
         }
     }
@@ -115,7 +248,7 @@ function Test-SPFDKIMDmarc {
             Severity = "Info"
             Message = "Unable to assess email authentication: $_"
             Details = @{ Error = $_.Exception.Message }
-            Recommendation = "Ensure Exchange Online PowerShell is connected"
+            Recommendation = "Ensure Exchange Online PowerShell is connected and DNS resolution is available"
             DocumentationUrl = "https://learn.microsoft.com/defender-office-365/email-authentication-about"
             RemediationSteps = @()
         }

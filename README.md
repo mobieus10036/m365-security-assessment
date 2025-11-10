@@ -72,7 +72,7 @@ Alternatively, **Global Administrator** role provides access to all checks.
 ### Exchange Online
 - ✅ Anti-spam and anti-malware configuration
 - ✅ Safe Attachments and Safe Links
-- ✅ SPF, DKIM, and DMARC records
+- ✅ **SPF, DKIM, and DMARC records** (with automated DNS validation)
 - ✅ Mailbox auditing status
 
 ### Licensing
@@ -85,9 +85,12 @@ Alternatively, **Global Administrator** role provides access to all checks.
 ## 📊 Sample Reports
 
 Reports are generated in the `reports/` folder with timestamps:
-- `M365Assessment_20250107_143022.html` - Interactive HTML report
-- `M365Assessment_20250107_143022.json` - Machine-readable JSON
-- `M365Assessment_20250107_143022.csv` - Spreadsheet-compatible CSV
+- `M365Assessment_20250107_143022.html` - Interactive HTML report with domain-level DNS details
+- `M365Assessment_20250107_143022.json` - Machine-readable JSON with full assessment data
+- `M365Assessment_20250107_143022.csv` - Spreadsheet-compatible CSV with summary results
+- `M365Assessment_20250107_143022_DomainEmailAuth.csv` - Per-domain SPF/DKIM/DMARC status
+- `M365Assessment_20250107_143022_NonCompliantMailboxes.csv` - Mailboxes without auditing enabled
+- `M365Assessment_20250107_143022_InactiveMailboxes.csv` - Inactive licensed users
 
 ## ⚙️ Configuration
 
@@ -154,6 +157,9 @@ The script will:
 ## 📚 Documentation
 
 - [Best Practices Reference](docs/best-practices-reference.md)
+- [DNS Validation Enhancement](docs/ENHANCEMENT-DNS-VALIDATION.md) - Real SPF/DKIM/DMARC checking
+- [Quick Reference: DNS Validation](docs/QUICK-REFERENCE-DNS-VALIDATION.md) - DNS troubleshooting guide
+- [Mailbox Auditing Enhancement](docs/ENHANCEMENT-MAILBOX-AUDITING.md)
 - [Remediation Guides](docs/remediation-guides/)
 - [Contributing Guidelines](CONTRIBUTING.md)
 

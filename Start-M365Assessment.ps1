@@ -349,6 +349,16 @@ function Export-Results {
             Write-Success "Inactive mailboxes CSV: $inactiveCsvPath"
             Write-Info "  → $($licenseOptResult.InactiveMailboxes.Count) inactive licensed user(s) exported"
         }
+
+        # Export domain email authentication details to separate CSV
+        $emailAuthResult = $script:AssessmentResults | Where-Object { $_.CheckName -eq "Email Authentication (SPF/DKIM/DMARC)" -and $_.DomainDetails }
+        if ($emailAuthResult -and $emailAuthResult.DomainDetails.Count -gt 0) {
+            $domainsCsvPath = Join-Path $OutputPath "$($baseFileName)_DomainEmailAuth.csv"
+            $emailAuthResult.DomainDetails | 
+                Export-Csv -Path $domainsCsvPath -NoTypeInformation -Encoding UTF8
+            Write-Success "Domain email authentication CSV: $domainsCsvPath"
+            Write-Info "  → $($emailAuthResult.DomainDetails.Count) domain(s) with SPF/DKIM/DMARC details exported"
+        }
     }
 
     # HTML Export
@@ -420,6 +430,33 @@ function Export-HTMLReport {
                 $detailsCell += "<li><em>...and $($result.NonCompliantMailboxes.Count - 20) more mailboxes (see CSV export)</em></li>"
             }
             $detailsCell += "</ul>"
+        }
+        
+        # Handle domain details from Email Authentication
+        if ($result.DomainDetails -and $result.DomainDetails.Count -gt 0) {
+            $detailsCell += "<br><br><strong>📧 Domain Email Authentication Details:</strong><br>"
+            $detailsCell += "<table style='width: 100%; margin-top: 5px; font-size: 0.85em; border-collapse: collapse;'>"
+            $detailsCell += "<tr style='background: #f0f0f0; font-weight: bold;'><td style='padding: 5px; border: 1px solid #ddd;'>Domain</td><td style='padding: 5px; border: 1px solid #ddd;'>SPF</td><td style='padding: 5px; border: 1px solid #ddd;'>DKIM</td><td style='padding: 5px; border: 1px solid #ddd;'>DMARC</td></tr>"
+            foreach ($domain in $result.DomainDetails) {
+                $spfIcon = switch -Regex ($domain.SPF) {
+                    "^Valid" { "✅" }
+                    "^Missing" { "❌" }
+                    "^Invalid" { "⚠️" }
+                    default { "❓" }
+                }
+                $dkimIcon = if ($domain.DKIM -eq "Enabled") { "✅" } else { "❌" }
+                $dmarcIcon = switch -Regex ($domain.DMARC) {
+                    "^Valid" { "✅" }
+                    "^Missing" { "❌" }
+                    "^Weak" { "⚠️" }
+                    default { "❓" }
+                }
+                $detailsCell += "<tr><td style='padding: 5px; border: 1px solid #ddd;'><code>$($domain.Domain)</code></td>"
+                $detailsCell += "<td style='padding: 5px; border: 1px solid #ddd;'>$spfIcon $($domain.SPF)</td>"
+                $detailsCell += "<td style='padding: 5px; border: 1px solid #ddd;'>$dkimIcon $($domain.DKIM)</td>"
+                $detailsCell += "<td style='padding: 5px; border: 1px solid #ddd;'>$dmarcIcon $($domain.DMARC)</td></tr>"
+            }
+            $detailsCell += "</table>"
         }
         
         $resultsHtml += @"
