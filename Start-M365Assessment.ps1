@@ -370,6 +370,16 @@ function Export-Results {
             Write-Success "Privileged accounts CSV: $privAccountsCsvPath"
             Write-Info "  → $($privAccountResult.PrivilegedAccounts.Count) privileged account(s) exported"
         }
+
+        # Export enabled Conditional Access policies to separate CSV
+        $caResult = $script:AssessmentResults | Where-Object { $_.CheckName -eq "Conditional Access Policies" -and $_.EnabledPolicies }
+        if ($caResult -and $caResult.EnabledPolicies.Count -gt 0) {
+            $caPoliciesCsvPath = Join-Path $OutputPath "$($baseFileName)_ConditionalAccessPolicies.csv"
+            $caResult.EnabledPolicies | Select-Object DisplayName, State, Id | 
+                Export-Csv -Path $caPoliciesCsvPath -NoTypeInformation -Encoding UTF8
+            Write-Success "Conditional Access policies CSV: $caPoliciesCsvPath"
+            Write-Info "  → $($caResult.EnabledPolicies.Count) policy/policies exported"
+        }
     }
 
     # HTML Export
