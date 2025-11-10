@@ -422,6 +422,62 @@ function Export-HTMLReport {
             $detailsCell += "</ul>"
         }
         
+        # Handle domains without DKIM from SPF/DKIM/DMARC check
+        if ($result.DomainsWithoutDKIM -and $result.DomainsWithoutDKIM.Count -gt 0) {
+            $detailsCell += "<br><br><strong>⚠️ Domains Without DKIM ($($result.DomainsWithoutDKIM.Count)):</strong><br>"
+            $detailsCell += "<ul style='margin-top: 5px; padding-left: 20px; font-size: 0.9em;'>"
+            foreach ($domain in $result.DomainsWithoutDKIM) {
+                $statusBadge = if ($domain.Status -eq "Not Configured") {
+                    '<span style="color: #d13438; font-weight: bold;">Not Configured</span>'
+                } else {
+                    '<span style="color: #ff8c00; font-weight: bold;">Disabled</span>'
+                }
+                $detailsCell += "<li><code>$($domain.Domain)</code> - $statusBadge</li>"
+            }
+            $detailsCell += "</ul>"
+        }
+        
+        # Handle enabled Conditional Access policies
+        if ($result.EnabledPolicies -and $result.EnabledPolicies.Count -gt 0) {
+            $detailsCell += "<br><br><strong>✅ Enabled Conditional Access Policies ($($result.EnabledPolicies.Count)):</strong><br>"
+            $detailsCell += "<ul style='margin-top: 5px; padding-left: 20px; font-size: 0.9em;'>"
+            foreach ($policy in $result.EnabledPolicies) {
+                $detailsCell += "<li><code>$($policy.DisplayName)</code>"
+                if ($policy.State) {
+                    $stateColor = if ($policy.State -eq 'enabled') { '#107c10' } else { '#ff8c00' }
+                    $detailsCell += " - <span style='color: $stateColor;'>$($policy.State)</span>"
+                }
+                $detailsCell += "</li>"
+            }
+            $detailsCell += "</ul>"
+        }
+        
+        # Handle privileged accounts
+        if ($result.PrivilegedAccounts -and $result.PrivilegedAccounts.Count -gt 0) {
+            $detailsCell += "<br><br><strong>👤 Privileged Accounts ($($result.PrivilegedAccounts.Count)):</strong><br>"
+            $detailsCell += "<ul style='margin-top: 5px; padding-left: 20px; font-size: 0.9em;'>"
+            $displayCount = [Math]::Min(20, $result.PrivilegedAccounts.Count)
+            for ($i = 0; $i -lt $displayCount; $i++) {
+                $account = $result.PrivilegedAccounts[$i]
+                $mfaStatus = if ($account.HasMFA -eq $false) {
+                    '<span style="color: #d13438; font-weight: bold;">⚠️ No MFA</span>'
+                } elseif ($account.HasMFA -eq $true) {
+                    '<span style="color: #107c10;">✓ MFA Enabled</span>'
+                } else {
+                    '<span style="color: #999;">Unknown</span>'
+                }
+                $detailsCell += "<li><code>$($account.UserPrincipalName)</code>"
+                if ($account.Roles) {
+                    $detailsCell += " - $($account.Roles -join ', ')"
+                }
+                $detailsCell += " | $mfaStatus</li>"
+            }
+            if ($result.PrivilegedAccounts.Count -gt 20) {
+                $detailsCell += "<li><em>...and $($result.PrivilegedAccounts.Count - 20) more accounts (see CSV export)</em></li>"
+            }
+            $detailsCell += "</ul>"
+        }
+        
         $resultsHtml += @"
         <tr class="$statusClass">
             <td>$($result.CheckName)</td>
