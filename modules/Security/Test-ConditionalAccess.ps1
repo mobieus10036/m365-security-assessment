@@ -35,6 +35,16 @@ function Test-ConditionalAccess {
         $reportOnlyPolicies = ($caPolicies | Where-Object { $_.State -eq 'enabledForReportingButNotEnforced' }).Count
         $disabledPolicies = ($caPolicies | Where-Object { $_.State -eq 'disabled' }).Count
 
+        # Collect enabled policy details for reporting
+        $enabledPolicyList = @()
+        foreach ($policy in ($caPolicies | Where-Object { $_.State -eq 'enabled' })) {
+            $enabledPolicyList += [PSCustomObject]@{
+                DisplayName = $policy.DisplayName
+                State = $policy.State
+                Id = $policy.Id
+            }
+        }
+
         # Check for recommended policy types
         $hasMFAPolicy = $caPolicies | Where-Object { 
             $_.GrantControls.BuiltInControls -contains 'mfa' -and $_.State -eq 'enabled' 
@@ -131,6 +141,7 @@ function Test-ConditionalAccess {
                 HasRiskBased = ($null -ne $hasRiskBasedPolicy)
                 Issues = $issues
             }
+            EnabledPolicies = $enabledPolicyList
             Recommendation = if ($recommendations.Count -gt 0) { 
                 $recommendations -join ". " 
             } else { 

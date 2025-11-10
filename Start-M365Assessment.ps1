@@ -459,6 +459,21 @@ function Export-HTMLReport {
             $detailsCell += "</table>"
         }
         
+        # Handle enabled Conditional Access policies
+        if ($result.EnabledPolicies -and $result.EnabledPolicies.Count -gt 0) {
+            $detailsCell += "<br><br><strong>✅ Enabled Conditional Access Policies ($($result.EnabledPolicies.Count)):</strong><br>"
+            $detailsCell += "<ul style='margin-top: 5px; padding-left: 20px; font-size: 0.9em;'>"
+            foreach ($policy in $result.EnabledPolicies) {
+                $detailsCell += "<li><code>$($policy.DisplayName)</code>"
+                if ($policy.State) {
+                    $stateColor = if ($policy.State -eq 'enabled') { '#107c10' } else { '#ff8c00' }
+                    $detailsCell += " - <span style='color: $stateColor; font-weight: bold;'>$($policy.State)</span>"
+                }
+                $detailsCell += "</li>"
+            }
+            $detailsCell += "</ul>"
+        }
+        
         $resultsHtml += @"
         <tr class="$statusClass">
             <td>$($result.CheckName)</td>
