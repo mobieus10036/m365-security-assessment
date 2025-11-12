@@ -51,7 +51,7 @@
 
 .NOTES
     Project: M365 Assessment Toolkit
-    Repository: https://github.com/mobieus10036/M365Assessment
+    Repository: https://github.com/mobieus10036/m365-security-guardian
     Author: mobieus10036
     Version: 3.0.0
     Created with assistance from GitHub Copilot
@@ -297,7 +297,7 @@ function Export-Results {
     }
 
     $timestamp = Get-Date -Format 'yyyyMMdd_HHmmss'
-    $baseFileName = "M365Assessment_$timestamp"
+    $baseFileName = "M365Guardian_$timestamp"
 
     # JSON Export
     if ($OutputFormat -in @('All', 'JSON')) {
@@ -684,7 +684,7 @@ catch {
     Write-Error "`n✗ FATAL ERROR: Unable to complete assessment"
     Write-Error "Error Details: $($_.Exception.Message)"
     Write-Verbose $_.ScriptStackTrace
-    Write-Information "`nFor troubleshooting help, visit: https://github.com/mobieus10036/M365Assessment/issues" -InformationAction Continue
+    Write-Information "`nFor troubleshooting help, visit: https://github.com/mobieus10036/m365-security-guardian/issues" -InformationAction Continue
     exit 1
 }
 finally {

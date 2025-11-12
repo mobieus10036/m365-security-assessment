@@ -45,7 +45,7 @@
 - ✅ Added "Created with assistance from GitHub Copilot" to LICENSE
 - ✅ Updated all script .NOTES sections with:
   - Project name
-  - Repository URL: https://github.com/mobieus10036/M365Assessment
+  - Repository URL: https://github.com/mobieus10036/m365-security-guardian
   - Author: mobieus10036
   - GitHub Copilot credit
 - ✅ Added GitHub Copilot badge to README

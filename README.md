@@ -34,8 +34,8 @@ This toolkit performs automated assessments across your Microsoft 365 tenant to 
 
 1. **Clone the repository**:
    ```powershell
-   git clone https://github.com/mobieus10036/M365Assessment.git
-   cd M365Assessment
+   git clone https://github.com/mobieus10036/m365-security-guardian.git
+   cd m365-security-guardian
    ```
 
 2. **Install required PowerShell modules**:
@@ -88,12 +88,12 @@ Alternatively, **Global Administrator** role provides access to all checks.
 ## 📊 Sample Reports
 
 Reports are generated in the `reports/` folder with timestamps:
-- `M365Assessment_20250107_143022.html` - Interactive HTML report with domain-level DNS details
-- `M365Assessment_20250107_143022.json` - Machine-readable JSON with full assessment data
-- `M365Assessment_20250107_143022.csv` - Spreadsheet-compatible CSV with summary results
-- `M365Assessment_20250107_143022_DomainEmailAuth.csv` - Per-domain SPF/DKIM/DMARC status
-- `M365Assessment_20250107_143022_NonCompliantMailboxes.csv` - Mailboxes without auditing enabled
-- `M365Assessment_20250107_143022_InactiveMailboxes.csv` - Inactive licensed users
+- `M365Guardian_20250107_143022.html` - Interactive HTML report with domain-level DNS details
+- `M365Guardian_20250107_143022.json` - Machine-readable JSON with full assessment data
+- `M365Guardian_20250107_143022.csv` - Spreadsheet-compatible CSV with summary results
+- `M365Guardian_20250107_143022_DomainEmailAuth.csv` - Per-domain SPF/DKIM/DMARC status
+- `M365Guardian_20250107_143022_NonCompliantMailboxes.csv` - Mailboxes without auditing enabled
+- `M365Guardian_20250107_143022_InactiveMailboxes.csv` - Inactive licensed users
 
 ## ⚙️ Configuration
 
@@ -147,7 +147,7 @@ The toolkit includes a remediation script to automatically enable auditing for m
 .\Enable-MailboxAuditing.ps1 -Force
 
 # Use a specific report file
-.\Enable-MailboxAuditing.ps1 -CsvPath .\reports\M365Assessment_20241109_120000_NonCompliantMailboxes.csv
+.\Enable-MailboxAuditing.ps1 -CsvPath .\reports\M365Guardian_20241109_120000_NonCompliantMailboxes.csv
 ```
 
 The script will:
@@ -194,8 +194,8 @@ This toolkit performs **read-only** operations and does not make changes to your
 
 ## 📧 Support
 
-- **Issues**: [GitHub Issues](https://github.com/mobieus10036/M365Assessment/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/mobieus10036/M365Assessment/discussions)
+- **Issues**: [GitHub Issues](https://github.com/mobieus10036/m365-security-guardian/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/mobieus10036/m365-security-guardian/discussions)
 - **Security Issues**: See [SECURITY.md](SECURITY.md)
 
 ---

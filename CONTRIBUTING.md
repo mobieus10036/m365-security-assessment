@@ -17,8 +17,8 @@ Thank you for your interest in contributing! This document provides guidelines a
 1. **Fork the repository** on GitHub
 2. **Clone your fork** locally:
    ```powershell
-   git clone https://github.com/YOUR-USERNAME/m365-tenant-assessment-kit-v3.git
-   cd m365-tenant-assessment-kit-v3
+   git clone https://github.com/YOUR-USERNAME/m365-security-guardian.git
+   cd m365-security-guardian
    ```
 3. **Create a branch** for your work:
    ```powershell

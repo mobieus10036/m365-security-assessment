@@ -21,7 +21,7 @@
     Enables auditing for mailboxes in the latest non-compliant report.
 
 .EXAMPLE
-    .\Enable-MailboxAuditing.ps1 -CsvPath .\reports\M365Assessment_20241109_120000_NonCompliantMailboxes.csv -WhatIf
+    .\Enable-MailboxAuditing.ps1 -CsvPath .\reports\M365Guardian_20241109_120000_NonCompliantMailboxes.csv -WhatIf
     Shows what mailboxes would have auditing enabled without making changes.
 
 .EXAMPLE
@@ -30,7 +30,7 @@
 
 .NOTES
     Project: M365 Assessment Toolkit
-    Repository: https://github.com/mobieus10036/M365Assessment
+    Repository: https://github.com/mobieus10036/m365-security-guardian
     Author: mobieus10036
     Version: 3.0.0
     Created with assistance from GitHub Copilot
