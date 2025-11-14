@@ -128,6 +128,28 @@ function Write-Info {
     Write-Information "  ℹ $Message" -InformationAction Continue
 }
 
+function ConvertTo-HtmlSafe {
+    <#
+    .SYNOPSIS
+        HTML-encodes a string to prevent XSS attacks.
+    .DESCRIPTION
+        Converts special characters to HTML entities to safely display
+        user-provided or dynamic content in HTML reports.
+    #>
+    param(
+        [Parameter(ValueFromPipeline = $true)]
+        [AllowNull()]
+        [AllowEmptyString()]
+        [string]$Text
+    )
+    
+    if ([string]::IsNullOrEmpty($Text)) {
+        return $Text
+    }
+    
+    return [System.Web.HttpUtility]::HtmlEncode($Text)
+}
+
 function Load-Configuration {
     Write-Step "Loading configuration..."
     
@@ -408,8 +430,17 @@ function Export-HTMLReport {
         $statusClass = $result.Status.ToLower()
         $severityClass = $result.Severity.ToLower()
         
+        # HTML-encode all dynamic text values for XSS protection
+        $checkNameSafe = ConvertTo-HtmlSafe $result.CheckName
+        $categorySafe = ConvertTo-HtmlSafe $result.Category
+        $statusSafe = ConvertTo-HtmlSafe $result.Status
+        $severitySafe = ConvertTo-HtmlSafe $result.Severity
+        $messageSafe = ConvertTo-HtmlSafe $result.Message
+        $recommendationSafe = ConvertTo-HtmlSafe $result.Recommendation
+        $docUrlSafe = ConvertTo-HtmlSafe $result.DocumentationUrl
+        
         # Check for detailed non-compliant mailboxes
-        $detailsCell = $result.Message
+        $detailsCell = $messageSafe
         
         # Handle inactive mailboxes from License Optimization
         if ($result.InactiveMailboxes -and $result.InactiveMailboxes.Count -gt 0) {
@@ -418,12 +449,15 @@ function Export-HTMLReport {
             $displayCount = [Math]::Min(20, $result.InactiveMailboxes.Count)
             for ($i = 0; $i -lt $displayCount; $i++) {
                 $mailbox = $result.InactiveMailboxes[$i]
+                $upnSafe = ConvertTo-HtmlSafe $mailbox.UserPrincipalName
+                $nameSafe = ConvertTo-HtmlSafe $mailbox.DisplayName
                 $lastSignIn = if ($mailbox.LastSignInDate -eq 'Never') { 
                     '<span style="color: #d13438; font-weight: bold;">Never</span>' 
                 } else { 
-                    $mailbox.LastSignInDate 
+                    ConvertTo-HtmlSafe $mailbox.LastSignInDate
                 }
-                $detailsCell += "<li><code>$($mailbox.UserPrincipalName)</code> - $($mailbox.DisplayName) | Last: $lastSignIn ($($mailbox.DaysSinceLastSignIn) days ago)</li>"
+                $daysSafe = ConvertTo-HtmlSafe $mailbox.DaysSinceLastSignIn
+                $detailsCell += "<li><code>$upnSafe</code> - $nameSafe | Last: $lastSignIn ($daysSafe days ago)</li>"
             }
             if ($result.InactiveMailboxes.Count -gt 20) {
                 $detailsCell += "<li><em>...and $($result.InactiveMailboxes.Count - 20) more users (see CSV export)</em></li>"
@@ -438,7 +472,9 @@ function Export-HTMLReport {
             $displayCount = [Math]::Min(20, $result.NonCompliantMailboxes.Count)
             for ($i = 0; $i -lt $displayCount; $i++) {
                 $mailbox = $result.NonCompliantMailboxes[$i]
-                $detailsCell += "<li><code>$($mailbox.UserPrincipalName)</code> - $($mailbox.DisplayName)</li>"
+                $upnSafe = ConvertTo-HtmlSafe $mailbox.UserPrincipalName
+                $nameSafe = ConvertTo-HtmlSafe $mailbox.DisplayName
+                $detailsCell += "<li><code>$upnSafe</code> - $nameSafe</li>"
             }
             if ($result.NonCompliantMailboxes.Count -gt 20) {
                 $detailsCell += "<li><em>...and $($result.NonCompliantMailboxes.Count - 20) more mailboxes (see CSV export)</em></li>"
@@ -452,6 +488,11 @@ function Export-HTMLReport {
             $detailsCell += "<table style='width: 100%; margin-top: 5px; font-size: 0.85em; border-collapse: collapse;'>"
             $detailsCell += "<tr style='background: #f0f0f0; font-weight: bold;'><td style='padding: 5px; border: 1px solid #ddd;'>Domain</td><td style='padding: 5px; border: 1px solid #ddd;'>SPF</td><td style='padding: 5px; border: 1px solid #ddd;'>DKIM</td><td style='padding: 5px; border: 1px solid #ddd;'>DMARC</td></tr>"
             foreach ($domain in $result.DomainDetails) {
+                $domainSafe = ConvertTo-HtmlSafe $domain.Domain
+                $spfSafe = ConvertTo-HtmlSafe $domain.SPF
+                $dkimSafe = ConvertTo-HtmlSafe $domain.DKIM
+                $dmarcSafe = ConvertTo-HtmlSafe $domain.DMARC
+                
                 $spfIcon = switch -Regex ($domain.SPF) {
                     "^Valid" { "✅" }
                     "^Missing" { "❌" }
@@ -465,10 +506,10 @@ function Export-HTMLReport {
                     "^Weak" { "⚠️" }
                     default { "❓" }
                 }
-                $detailsCell += "<tr><td style='padding: 5px; border: 1px solid #ddd;'><code>$($domain.Domain)</code></td>"
-                $detailsCell += "<td style='padding: 5px; border: 1px solid #ddd;'>$spfIcon $($domain.SPF)</td>"
-                $detailsCell += "<td style='padding: 5px; border: 1px solid #ddd;'>$dkimIcon $($domain.DKIM)</td>"
-                $detailsCell += "<td style='padding: 5px; border: 1px solid #ddd;'>$dmarcIcon $($domain.DMARC)</td></tr>"
+                $detailsCell += "<tr><td style='padding: 5px; border: 1px solid #ddd;'><code>$domainSafe</code></td>"
+                $detailsCell += "<td style='padding: 5px; border: 1px solid #ddd;'>$spfIcon $spfSafe</td>"
+                $detailsCell += "<td style='padding: 5px; border: 1px solid #ddd;'>$dkimIcon $dkimSafe</td>"
+                $detailsCell += "<td style='padding: 5px; border: 1px solid #ddd;'>$dmarcIcon $dmarcSafe</td></tr>"
             }
             $detailsCell += "</table>"
         }
@@ -478,10 +519,12 @@ function Export-HTMLReport {
             $detailsCell += "<br><br><strong>✅ Enabled Conditional Access Policies ($($result.EnabledPolicies.Count)):</strong><br>"
             $detailsCell += "<ul style='margin-top: 5px; padding-left: 20px; font-size: 0.9em;'>"
             foreach ($policy in $result.EnabledPolicies) {
-                $detailsCell += "<li><code>$($policy.DisplayName)</code>"
+                $policyNameSafe = ConvertTo-HtmlSafe $policy.DisplayName
+                $policyStateSafe = ConvertTo-HtmlSafe $policy.State
+                $detailsCell += "<li><code>$policyNameSafe</code>"
                 if ($policy.State) {
                     $stateColor = if ($policy.State -eq 'enabled') { '#107c10' } else { '#ff8c00' }
-                    $detailsCell += " - <span style='color: $stateColor; font-weight: bold;'>$($policy.State)</span>"
+                    $detailsCell += " - <span style='color: $stateColor; font-weight: bold;'>$policyStateSafe</span>"
                 }
                 $detailsCell += "</li>"
             }
@@ -494,11 +537,12 @@ function Export-HTMLReport {
             $detailsCell += "<table style='width: 100%; margin-top: 5px; font-size: 0.85em; border-collapse: collapse;'>"
             $detailsCell += "<tr style='background: #f0f0f0; font-weight: bold;'><td style='padding: 5px; border: 1px solid #ddd;'>User Principal Name</td><td style='padding: 5px; border: 1px solid #ddd;'>Roles</td><td style='padding: 5px; border: 1px solid #ddd;'>MFA Status</td></tr>"
             foreach ($account in $result.PrivilegedAccounts) {
+                $accountUpnSafe = ConvertTo-HtmlSafe $account.UserPrincipalName
                 $mfaIcon = if ($account.HasMFA) { "✅ Enabled" } else { "❌ Not Enabled" }
                 $mfaColor = if ($account.HasMFA) { '#107c10' } else { '#d13438' }
-                $rolesDisplay = ($account.Roles | ForEach-Object { $_ }) -join ', '
-                $detailsCell += "<tr><td style='padding: 5px; border: 1px solid #ddd;'><code>$($account.UserPrincipalName)</code></td>"
-                $detailsCell += "<td style='padding: 5px; border: 1px solid #ddd; font-size: 0.8em;'>$rolesDisplay</td>"
+                $rolesSafe = ($account.Roles | ForEach-Object { ConvertTo-HtmlSafe $_ }) -join ', '
+                $detailsCell += "<tr><td style='padding: 5px; border: 1px solid #ddd;'><code>$accountUpnSafe</code></td>"
+                $detailsCell += "<td style='padding: 5px; border: 1px solid #ddd; font-size: 0.8em;'>$rolesSafe</td>"
                 $detailsCell += "<td style='padding: 5px; border: 1px solid #ddd; color: $mfaColor; font-weight: bold;'>$mfaIcon</td></tr>"
             }
             $detailsCell += "</table>"
@@ -506,21 +550,22 @@ function Export-HTMLReport {
         
         $resultsHtml += @"
         <tr class="$statusClass">
-            <td>$($result.CheckName)</td>
-            <td><span class="category">$($result.Category)</span></td>
-            <td><span class="status status-$statusClass">$($result.Status)</span></td>
-            <td><span class="severity severity-$severityClass">$($result.Severity)</span></td>
+            <td>$checkNameSafe</td>
+            <td><span class="category">$categorySafe</span></td>
+            <td><span class="status status-$statusClass">$statusSafe</span></td>
+            <td><span class="severity severity-$severityClass">$severitySafe</span></td>
             <td>$detailsCell</td>
-            <td>$($result.Recommendation)</td>
-            <td><a href="$($result.DocumentationUrl)" target="_blank">📘 Docs</a></td>
+            <td>$recommendationSafe</td>
+            <td><a href="$docUrlSafe" target="_blank">📘 Docs</a></td>
         </tr>
 "@
     }
 
-    # Replace placeholders
+    # Replace placeholders (encode tenant name for safety)
     $tenantName = if ($script:TenantInfo) { $script:TenantInfo.DisplayName } else { "Not Connected" }
+    $tenantNameSafe = ConvertTo-HtmlSafe $tenantName
     
-    $html = $html -replace '{{TENANT_NAME}}', $tenantName
+    $html = $html -replace '{{TENANT_NAME}}', $tenantNameSafe
     $html = $html -replace '{{ASSESSMENT_DATE}}', (Get-Date -Format 'yyyy-MM-dd HH:mm:ss')
     $html = $html -replace '{{TOTAL_CHECKS}}', $totalChecks
     $html = $html -replace '{{PASS_COUNT}}', $passCount

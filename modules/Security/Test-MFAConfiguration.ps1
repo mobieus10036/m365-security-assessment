@@ -51,37 +51,60 @@ function Test-MFAConfiguration {
         }
 
         # Get MFA authentication methods for users
+        # Use batching to improve performance for large tenants
         $usersWithMFA = 0
         $usersWithoutMFA = @()
+        $batchSize = 100
+        $processedCount = 0
 
-        foreach ($user in $allUsers) {
-            try {
-                $authMethods = Get-MgUserAuthenticationMethod -UserId $user.Id -ErrorAction SilentlyContinue
-                
-                # Check for MFA-capable methods (Phone, FIDO2, Authenticator App, etc.)
-                $hasMFA = $authMethods | Where-Object {
-                    $_.AdditionalProperties.'@odata.type' -in @(
-                        '#microsoft.graph.phoneAuthenticationMethod',
-                        '#microsoft.graph.fido2AuthenticationMethod',
-                        '#microsoft.graph.microsoftAuthenticatorAuthenticationMethod',
-                        '#microsoft.graph.softwareOathAuthenticationMethod',
-                        '#microsoft.graph.windowsHelloForBusinessAuthenticationMethod'
-                    )
-                }
+        Write-Verbose "Checking MFA status for $totalUsers users..."
 
-                if ($hasMFA) {
-                    $usersWithMFA++
-                }
-                else {
-                    $usersWithoutMFA += [PSCustomObject]@{
-                        UserPrincipalName = $user.UserPrincipalName
-                        DisplayName = $user.DisplayName
-                        UserId = $user.Id
+        for ($i = 0; $i -lt $totalUsers; $i += $batchSize) {
+            $batchEnd = [Math]::Min($i + $batchSize, $totalUsers)
+            $batch = $allUsers[$i..($batchEnd - 1)]
+            
+            # Progress reporting for large tenants
+            if ($totalUsers -gt 100) {
+                $percentComplete = [Math]::Round(($processedCount / $totalUsers) * 100, 0)
+                Write-Verbose "  Progress: $processedCount/$totalUsers users ($percentComplete%)"
+            }
+
+            foreach ($user in $batch) {
+                try {
+                    $authMethods = Get-MgUserAuthenticationMethod -UserId $user.Id -ErrorAction SilentlyContinue
+                    
+                    # Check for MFA-capable methods (Phone, FIDO2, Authenticator App, etc.)
+                    $hasMFA = $authMethods | Where-Object {
+                        $_.AdditionalProperties.'@odata.type' -in @(
+                            '#microsoft.graph.phoneAuthenticationMethod',
+                            '#microsoft.graph.fido2AuthenticationMethod',
+                            '#microsoft.graph.microsoftAuthenticatorAuthenticationMethod',
+                            '#microsoft.graph.softwareOathAuthenticationMethod',
+                            '#microsoft.graph.windowsHelloForBusinessAuthenticationMethod'
+                        )
+                    }
+
+                    if ($hasMFA) {
+                        $usersWithMFA++
+                    }
+                    else {
+                        $usersWithoutMFA += [PSCustomObject]@{
+                            UserPrincipalName = $user.UserPrincipalName
+                            DisplayName = $user.DisplayName
+                            UserId = $user.Id
+                        }
                     }
                 }
+                catch {
+                    Write-Verbose "Could not check MFA for user: $($user.UserPrincipalName) - $_"
+                }
+                
+                $processedCount++
             }
-            catch {
-                Write-Verbose "Could not check MFA for user: $($user.UserPrincipalName)"
+            
+            # Add small delay between batches to avoid throttling
+            if ($i + $batchSize -lt $totalUsers) {
+                Start-Sleep -Milliseconds 100
             }
         }
 

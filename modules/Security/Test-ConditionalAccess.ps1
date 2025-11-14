@@ -48,24 +48,30 @@ function Test-ConditionalAccess {
             }
         }
 
-        # Check for recommended policy types
+        # Check for recommended policy types (only count enabled policies)
         $hasMFAPolicy = $caPolicies | Where-Object { 
             $_.GrantControls.BuiltInControls -contains 'mfa' -and $_.State -eq 'enabled' 
         }
         
         $hasBlockLegacyAuth = $caPolicies | Where-Object {
-            $_.Conditions.ClientAppTypes -contains 'exchangeActiveSync' -or
-            $_.Conditions.ClientAppTypes -contains 'other'
+            $_.State -eq 'enabled' -and (
+                $_.Conditions.ClientAppTypes -contains 'exchangeActiveSync' -or
+                $_.Conditions.ClientAppTypes -contains 'other'
+            )
         }
 
         $hasDeviceCompliancePolicy = $caPolicies | Where-Object {
-            $_.GrantControls.BuiltInControls -contains 'compliantDevice' -or
-            $_.GrantControls.BuiltInControls -contains 'domainJoinedDevice'
+            $_.State -eq 'enabled' -and (
+                $_.GrantControls.BuiltInControls -contains 'compliantDevice' -or
+                $_.GrantControls.BuiltInControls -contains 'domainJoinedDevice'
+            )
         }
 
         $hasRiskBasedPolicy = $caPolicies | Where-Object {
-            $null -ne $_.Conditions.SignInRiskLevels -or
-            $null -ne $_.Conditions.UserRiskLevels
+            $_.State -eq 'enabled' -and (
+                $null -ne $_.Conditions.SignInRiskLevels -or
+                $null -ne $_.Conditions.UserRiskLevels
+            )
         }
 
         # Minimum policies threshold
@@ -85,6 +91,11 @@ function Test-ConditionalAccess {
             $status = "Fail"
             $severity = "Critical"
             $issues += "No enabled Conditional Access policies"
+        }
+        elseif ($enabledPolicies -lt $minPolicies) {
+            $status = "Fail"
+            $severity = "High"
+            $issues += "Only $enabledPolicies enabled policies (minimum required: $minPolicies)"
         }
         else {
             $status = "Pass"

@@ -76,7 +76,8 @@ function Test-LegacyAuth {
         try {
             $startDate = (Get-Date).AddDays(-7).ToString('yyyy-MM-ddTHH:mm:ssZ')
             
-            $signIns = Get-MgAuditLogSignIn -Filter "createdDateTime ge $startDate and clientAppUsed eq 'Other clients' or clientAppUsed eq 'Exchange ActiveSync' or clientAppUsed eq 'POP3' or clientAppUsed eq 'IMAP4'" -Top 10 -ErrorAction SilentlyContinue
+            # Fix: Wrap client app conditions in parentheses so date filter applies to all
+            $signIns = Get-MgAuditLogSignIn -Filter "createdDateTime ge $startDate and (clientAppUsed eq 'Other clients' or clientAppUsed eq 'Exchange ActiveSync' or clientAppUsed eq 'POP3' or clientAppUsed eq 'IMAP4')" -Top 10 -ErrorAction SilentlyContinue
             
             if ($signIns -and $signIns.Count -gt 0) {
                 $recentLegacySignIns = $signIns.Count

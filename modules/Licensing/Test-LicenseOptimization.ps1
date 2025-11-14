@@ -89,13 +89,14 @@ function Test-LicenseOptimization {
         $status = "Pass"
         $severity = "Low"
 
-        if ($inactivePercentage -gt 15) {
-            $status = "Warning"
-            $severity = "Medium"
-        }
-        elseif ($inactivePercentage -gt 25) {
+        # Fixed: Reversed logic - higher percentages are worse
+        if ($inactivePercentage -gt 25) {
             $status = "Fail"
             $severity = "High"
+        }
+        elseif ($inactivePercentage -gt 15) {
+            $status = "Warning"
+            $severity = "Medium"
         }
 
         $message = "$inactiveCount inactive licensed users ($inactivePercentage%) - not signed in for $inactiveDaysThreshold+ days"
