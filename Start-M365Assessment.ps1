@@ -438,7 +438,28 @@ function Export-HTMLReport {
     $infoCount = ($Results | Where-Object { $_.Status -eq 'Info' }).Count
     $passPercentage = if ($totalChecks -gt 0) { [math]::Round(($passCount / $totalChecks) * 100, 1) } else { 0 }
 
-    # Build results table
+    # Calculate severity distribution for chart
+    $severityCounts = @{
+        'Critical' = ($Results | Where-Object { $_.Severity -eq 'Critical' }).Count
+        'High' = ($Results | Where-Object { $_.Severity -eq 'High' }).Count
+        'Medium' = ($Results | Where-Object { $_.Severity -eq 'Medium' }).Count
+        'Low' = ($Results | Where-Object { $_.Severity -eq 'Low' }).Count
+        'Info' = ($Results | Where-Object { $_.Severity -eq 'Info' }).Count
+    }
+    
+    # Build arrays for Chart.js (only include severities with counts > 0)
+    $severityLabels = @()
+    $severityValues = @()
+    foreach ($severity in @('Critical', 'High', 'Medium', 'Low', 'Info')) {
+        if ($severityCounts[$severity] -gt 0) {
+            $severityLabels += "'$severity'"
+            $severityValues += $severityCounts[$severity]
+        }
+    }
+    $severityLabelsJson = "[$($severityLabels -join ', ')]"
+    $severityValuesJson = "[$($severityValues -join ', ')]"
+
+    # Build results cards
     $resultsHtml = ""
     foreach ($result in $Results) {
         $statusClass = $result.Status.ToLower()
@@ -453,54 +474,54 @@ function Export-HTMLReport {
         $recommendationSafe = ConvertTo-HtmlSafe $result.Recommendation
         $docUrlSafe = ConvertTo-HtmlSafe $result.DocumentationUrl
         
-        # Check for detailed non-compliant mailboxes
-        $detailsCell = $messageSafe
+        # Build detailed findings content
+        $findingContent = $messageSafe
         
         # Handle inactive mailboxes from License Optimization
         if ($result.InactiveMailboxes -and $result.InactiveMailboxes.Count -gt 0) {
-            $detailsCell += "<br><br><strong>⚠️ Inactive Licensed Users ($($result.InactiveMailboxes.Count)):</strong><br>"
-            $detailsCell += "<ul style='margin-top: 5px; padding-left: 20px; font-size: 0.9em;'>"
-            $displayCount = [Math]::Min(20, $result.InactiveMailboxes.Count)
+            $findingContent += "<br><br><strong>Inactive Licensed Users ($($result.InactiveMailboxes.Count)):</strong><br>"
+            $findingContent += "<ul>"
+            $displayCount = [Math]::Min(10, $result.InactiveMailboxes.Count)
             for ($i = 0; $i -lt $displayCount; $i++) {
                 $mailbox = $result.InactiveMailboxes[$i]
                 $upnSafe = ConvertTo-HtmlSafe $mailbox.UserPrincipalName
                 $nameSafe = ConvertTo-HtmlSafe $mailbox.DisplayName
                 $lastSignIn = if ($mailbox.LastSignInDate -eq 'Never') { 
-                    '<span style="color: #d13438; font-weight: bold;">Never</span>' 
+                    '<span style="color: #d13438; font-weight: 600;">Never</span>' 
                 } else { 
                     ConvertTo-HtmlSafe $mailbox.LastSignInDate
                 }
                 $daysSafe = ConvertTo-HtmlSafe $mailbox.DaysSinceLastSignIn
-                $detailsCell += "<li><code>$upnSafe</code> - $nameSafe | Last: $lastSignIn ($daysSafe days ago)</li>"
+                $findingContent += "<li><code>$upnSafe</code> - $nameSafe | Last: $lastSignIn ($daysSafe days ago)</li>"
             }
-            if ($result.InactiveMailboxes.Count -gt 20) {
-                $detailsCell += "<li><em>...and $($result.InactiveMailboxes.Count - 20) more users (see CSV export)</em></li>"
+            if ($result.InactiveMailboxes.Count -gt 10) {
+                $findingContent += "<li><em>...and $($result.InactiveMailboxes.Count - 10) more users (see CSV export)</em></li>"
             }
-            $detailsCell += "</ul>"
+            $findingContent += "</ul>"
         }
         
         # Handle non-compliant mailboxes from Mailbox Auditing
         if ($result.NonCompliantMailboxes -and $result.NonCompliantMailboxes.Count -gt 0) {
-            $detailsCell += "<br><br><strong>🚨 Non-Compliant Mailboxes ($($result.NonCompliantMailboxes.Count)):</strong><br>"
-            $detailsCell += "<ul style='margin-top: 5px; padding-left: 20px; font-size: 0.9em;'>"
-            $displayCount = [Math]::Min(20, $result.NonCompliantMailboxes.Count)
+            $findingContent += "<br><br><strong>Non-Compliant Mailboxes ($($result.NonCompliantMailboxes.Count)):</strong><br>"
+            $findingContent += "<ul>"
+            $displayCount = [Math]::Min(10, $result.NonCompliantMailboxes.Count)
             for ($i = 0; $i -lt $displayCount; $i++) {
                 $mailbox = $result.NonCompliantMailboxes[$i]
                 $upnSafe = ConvertTo-HtmlSafe $mailbox.UserPrincipalName
                 $nameSafe = ConvertTo-HtmlSafe $mailbox.DisplayName
-                $detailsCell += "<li><code>$upnSafe</code> - $nameSafe</li>"
+                $findingContent += "<li><code>$upnSafe</code> - $nameSafe</li>"
             }
-            if ($result.NonCompliantMailboxes.Count -gt 20) {
-                $detailsCell += "<li><em>...and $($result.NonCompliantMailboxes.Count - 20) more mailboxes (see CSV export)</em></li>"
+            if ($result.NonCompliantMailboxes.Count -gt 10) {
+                $findingContent += "<li><em>...and $($result.NonCompliantMailboxes.Count - 10) more mailboxes (see CSV export)</em></li>"
             }
-            $detailsCell += "</ul>"
+            $findingContent += "</ul>"
         }
         
         # Handle domain details from Email Authentication
         if ($result.DomainDetails -and $result.DomainDetails.Count -gt 0) {
-            $detailsCell += "<br><br><strong>📧 Domain Email Authentication Details:</strong><br>"
-            $detailsCell += "<table style='width: 100%; margin-top: 5px; font-size: 0.85em; border-collapse: collapse;'>"
-            $detailsCell += "<tr style='background: #f0f0f0; font-weight: bold;'><td style='padding: 5px; border: 1px solid #ddd;'>Domain</td><td style='padding: 5px; border: 1px solid #ddd;'>SPF</td><td style='padding: 5px; border: 1px solid #ddd;'>DKIM</td><td style='padding: 5px; border: 1px solid #ddd;'>DMARC</td></tr>"
+            $findingContent += "<br><br><strong>Domain Email Authentication Details:</strong><br>"
+            $findingContent += "<table style='width: 100%; margin-top: 10px; border-collapse: collapse; font-size: 13px;'>"
+            $findingContent += "<tr style='background: var(--gray-100); font-weight: 600;'><td style='padding: 8px; border: 1px solid var(--gray-300);'>Domain</td><td style='padding: 8px; border: 1px solid var(--gray-300);'>SPF</td><td style='padding: 8px; border: 1px solid var(--gray-300);'>DKIM</td><td style='padding: 8px; border: 1px solid var(--gray-300);'>DMARC</td></tr>"
             foreach ($domain in $result.DomainDetails) {
                 $domainSafe = ConvertTo-HtmlSafe $domain.Domain
                 $spfSafe = ConvertTo-HtmlSafe $domain.SPF
@@ -520,58 +541,89 @@ function Export-HTMLReport {
                     "^Weak" { "⚠️" }
                     default { "❓" }
                 }
-                $detailsCell += "<tr><td style='padding: 5px; border: 1px solid #ddd;'><code>$domainSafe</code></td>"
-                $detailsCell += "<td style='padding: 5px; border: 1px solid #ddd;'>$spfIcon $spfSafe</td>"
-                $detailsCell += "<td style='padding: 5px; border: 1px solid #ddd;'>$dkimIcon $dkimSafe</td>"
-                $detailsCell += "<td style='padding: 5px; border: 1px solid #ddd;'>$dmarcIcon $dmarcSafe</td></tr>"
+                $findingContent += "<tr><td style='padding: 8px; border: 1px solid var(--gray-300);'><code>$domainSafe</code></td>"
+                $findingContent += "<td style='padding: 8px; border: 1px solid var(--gray-300);'>$spfIcon $spfSafe</td>"
+                $findingContent += "<td style='padding: 8px; border: 1px solid var(--gray-300);'>$dkimIcon $dkimSafe</td>"
+                $findingContent += "<td style='padding: 8px; border: 1px solid var(--gray-300);'>$dmarcIcon $dmarcSafe</td></tr>"
             }
-            $detailsCell += "</table>"
+            $findingContent += "</table>"
         }
         
         # Handle enabled Conditional Access policies
         if ($result.EnabledPolicies -and $result.EnabledPolicies.Count -gt 0) {
-            $detailsCell += "<br><br><strong>✅ Enabled Conditional Access Policies ($($result.EnabledPolicies.Count)):</strong><br>"
-            $detailsCell += "<ul style='margin-top: 5px; padding-left: 20px; font-size: 0.9em;'>"
+            $findingContent += "<br><br><strong>Enabled Conditional Access Policies ($($result.EnabledPolicies.Count)):</strong><br>"
+            $findingContent += "<ul>"
             foreach ($policy in $result.EnabledPolicies) {
                 $policyNameSafe = ConvertTo-HtmlSafe $policy.DisplayName
                 $policyStateSafe = ConvertTo-HtmlSafe $policy.State
-                $detailsCell += "<li><code>$policyNameSafe</code>"
+                $findingContent += "<li><code>$policyNameSafe</code>"
                 if ($policy.State) {
-                    $stateColor = if ($policy.State -eq 'enabled') { '#107c10' } else { '#ff8c00' }
-                    $detailsCell += " - <span style='color: $stateColor; font-weight: bold;'>$policyStateSafe</span>"
+                    $stateColor = if ($policy.State -eq 'enabled') { 'var(--success-color)' } else { 'var(--warning-color)' }
+                    $findingContent += " - <span style='color: $stateColor; font-weight: 600;'>$policyStateSafe</span>"
                 }
-                $detailsCell += "</li>"
+                $findingContent += "</li>"
             }
-            $detailsCell += "</ul>"
+            $findingContent += "</ul>"
         }
         
         # Handle privileged accounts from Privileged Account Security
         if ($result.PrivilegedAccounts -and $result.PrivilegedAccounts.Count -gt 0) {
-            $detailsCell += "<br><br><strong>👤 Privileged Accounts ($($result.PrivilegedAccounts.Count)):</strong><br>"
-            $detailsCell += "<table style='width: 100%; margin-top: 5px; font-size: 0.85em; border-collapse: collapse;'>"
-            $detailsCell += "<tr style='background: #f0f0f0; font-weight: bold;'><td style='padding: 5px; border: 1px solid #ddd;'>User Principal Name</td><td style='padding: 5px; border: 1px solid #ddd;'>Roles</td><td style='padding: 5px; border: 1px solid #ddd;'>MFA Status</td></tr>"
+            $findingContent += "<br><br><strong>Privileged Accounts ($($result.PrivilegedAccounts.Count)):</strong><br>"
+            $findingContent += "<table style='width: 100%; margin-top: 10px; border-collapse: collapse; font-size: 13px;'>"
+            $findingContent += "<tr style='background: var(--gray-100); font-weight: 600;'><td style='padding: 8px; border: 1px solid var(--gray-300);'>User Principal Name</td><td style='padding: 8px; border: 1px solid var(--gray-300);'>Roles</td><td style='padding: 8px; border: 1px solid var(--gray-300);'>MFA Status</td></tr>"
             foreach ($account in $result.PrivilegedAccounts) {
                 $accountUpnSafe = ConvertTo-HtmlSafe $account.UserPrincipalName
                 $mfaIcon = if ($account.HasMFA) { "✅ Enabled" } else { "❌ Not Enabled" }
-                $mfaColor = if ($account.HasMFA) { '#107c10' } else { '#d13438' }
+                $mfaColor = if ($account.HasMFA) { 'var(--success-color)' } else { 'var(--danger-color)' }
                 $rolesSafe = ($account.Roles | ForEach-Object { ConvertTo-HtmlSafe $_ }) -join ', '
-                $detailsCell += "<tr><td style='padding: 5px; border: 1px solid #ddd;'><code>$accountUpnSafe</code></td>"
-                $detailsCell += "<td style='padding: 5px; border: 1px solid #ddd; font-size: 0.8em;'>$rolesSafe</td>"
-                $detailsCell += "<td style='padding: 5px; border: 1px solid #ddd; color: $mfaColor; font-weight: bold;'>$mfaIcon</td></tr>"
+                $findingContent += "<tr><td style='padding: 8px; border: 1px solid var(--gray-300);'><code>$accountUpnSafe</code></td>"
+                $findingContent += "<td style='padding: 8px; border: 1px solid var(--gray-300); font-size: 12px;'>$rolesSafe</td>"
+                $findingContent += "<td style='padding: 8px; border: 1px solid var(--gray-300); color: $mfaColor; font-weight: 600;'>$mfaIcon</td></tr>"
             }
-            $detailsCell += "</table>"
+            $findingContent += "</table>"
         }
         
+        # Build finding card HTML
         $resultsHtml += @"
-        <tr class="$statusClass">
-            <td>$checkNameSafe</td>
-            <td><span class="category">$categorySafe</span></td>
-            <td><span class="status status-$statusClass">$statusSafe</span></td>
-            <td><span class="severity severity-$severityClass">$severitySafe</span></td>
-            <td>$detailsCell</td>
-            <td>$recommendationSafe</td>
-            <td><a href="$docUrlSafe" target="_blank">📘 Docs</a></td>
-        </tr>
+<div class="finding-card" data-status="$statusClass">
+    <div class="finding-header">
+        <div class="finding-title-group">
+            <div class="finding-name">$checkNameSafe</div>
+            <div class="finding-badges">
+                <span class="badge badge-category">$categorySafe</span>
+                <span class="badge badge-status-$statusClass">$statusSafe</span>
+                <span class="badge badge-severity-$severityClass">$severitySafe</span>
+            </div>
+        </div>
+    </div>
+    <div class="finding-body">
+        <div class="finding-section">
+            <div class="finding-label">Finding</div>
+            <div class="finding-content">$findingContent</div>
+        </div>
+        <div class="finding-section">
+            <div class="finding-label">Recommendation</div>
+            <div class="finding-content">$recommendationSafe</div>
+        </div>
+        <div class="finding-section">
+            <a href="$docUrlSafe" target="_blank" class="doc-link">
+                <span>📘</span>
+                <span>View Documentation</span>
+            </a>
+        </div>
+    </div>
+</div>
+
+"@
+    }
+    
+    # Add empty state if no results
+    if ($Results.Count -eq 0) {
+        $resultsHtml = @"
+<div class="empty-state">
+    <div class="empty-state-icon">📋</div>
+    <div class="empty-state-text">No assessment results found</div>
+</div>
 "@
     }
 
@@ -587,7 +639,9 @@ function Export-HTMLReport {
     $html = $html -replace '{{WARN_COUNT}}', $warnCount
     $html = $html -replace '{{INFO_COUNT}}', $infoCount
     $html = $html -replace '{{PASS_PERCENTAGE}}', $passPercentage
-    $html = $html -replace '{{RESULTS_TABLE}}', $resultsHtml
+    $html = $html -replace '{{SEVERITY_LABELS}}', $severityLabelsJson
+    $html = $html -replace '{{SEVERITY_COUNTS}}', $severityValuesJson
+    $html = $html -replace '{{RESULTS_CARDS}}', $resultsHtml
 
     $html | Out-File $OutputPath -Encoding UTF8
 }
@@ -599,100 +653,616 @@ function Get-HTMLTemplate {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>M365 Assessment Report - {{TENANT_NAME}}</title>
+    <title>M365 Security Assessment Report - {{TENANT_NAME}}</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
     <style>
+        :root {
+            --primary-color: #0078d4;
+            --primary-dark: #005a9e;
+            --success-color: #107c10;
+            --danger-color: #d13438;
+            --warning-color: #ff8c00;
+            --info-color: #0078d4;
+            --gray-50: #fafafa;
+            --gray-100: #f5f5f5;
+            --gray-200: #e5e5e5;
+            --gray-300: #d4d4d4;
+            --gray-700: #424242;
+            --gray-900: #1a1a1a;
+            --shadow-sm: 0 1px 2px rgba(0,0,0,0.05);
+            --shadow-md: 0 4px 6px rgba(0,0,0,0.1);
+            --shadow-lg: 0 10px 15px rgba(0,0,0,0.1);
+            --radius-sm: 4px;
+            --radius-md: 8px;
+            --radius-lg: 12px;
+        }
+        
         * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #f5f5f5; padding: 20px; }
-        .container { max-width: 1400px; margin: 0 auto; background: white; box-shadow: 0 2px 10px rgba(0,0,0,0.1); border-radius: 8px; }
-        .header { background: linear-gradient(135deg, #0078d4 0%, #00bcf2 100%); color: white; padding: 30px; border-radius: 8px 8px 0 0; }
-        .header h1 { font-size: 28px; margin-bottom: 10px; }
-        .header p { opacity: 0.9; }
-        .summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; padding: 30px; background: #fafafa; }
-        .summary-card { background: white; padding: 20px; border-radius: 6px; text-align: center; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
-        .summary-card h3 { color: #666; font-size: 14px; margin-bottom: 10px; }
-        .summary-card .number { font-size: 36px; font-weight: bold; }
-        .summary-card.pass .number { color: #107c10; }
-        .summary-card.fail .number { color: #d13438; }
-        .summary-card.warn .number { color: #ff8c00; }
-        .summary-card.info .number { color: #0078d4; }
-        .results { padding: 30px; }
-        table { width: 100%; border-collapse: collapse; margin-top: 20px; }
-        th { background: #f0f0f0; padding: 12px; text-align: left; font-weight: 600; border-bottom: 2px solid #ddd; }
-        td { padding: 12px; border-bottom: 1px solid #eee; }
-        tr:hover { background: #f9f9f9; }
-        .status { padding: 4px 12px; border-radius: 12px; font-size: 12px; font-weight: 600; }
-        .status-pass { background: #dff6dd; color: #107c10; }
-        .status-fail { background: #fde7e9; color: #d13438; }
-        .status-warning { background: #fff4ce; color: #ff8c00; }
-        .status-info { background: #e1f5fe; color: #0078d4; }
-        .severity { padding: 4px 8px; border-radius: 4px; font-size: 11px; }
-        .severity-critical { background: #d13438; color: white; }
-        .severity-high { background: #ff8c00; color: white; }
-        .severity-medium { background: #ffd700; color: #333; }
-        .severity-low { background: #90ee90; color: #333; }
-        .severity-info { background: #e1f5fe; color: #0078d4; }
-        .category { background: #0078d4; color: white; padding: 4px 8px; border-radius: 4px; font-size: 11px; }
-        a { color: #0078d4; text-decoration: none; }
-        a:hover { text-decoration: underline; }
-        code { background: #f4f4f4; padding: 2px 6px; border-radius: 3px; font-family: 'Consolas', monospace; font-size: 0.9em; color: #d13438; }
-        ul { margin: 0; }
-        ul li { margin: 3px 0; }
+        
+        body { 
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica Neue', Arial, sans-serif;
+            background: var(--gray-100);
+            color: var(--gray-900);
+            line-height: 1.6;
+            padding: 20px;
+        }
+        
+        .container { 
+            max-width: 1600px;
+            margin: 0 auto;
+            background: white;
+            box-shadow: var(--shadow-lg);
+            border-radius: var(--radius-lg);
+            overflow: hidden;
+        }
+        
+        .header { 
+            background: linear-gradient(135deg, #0078d4 0%, #005a9e 50%, #004578 100%);
+            color: white;
+            padding: 40px;
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .header::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            right: 0;
+            width: 400px;
+            height: 400px;
+            background: radial-gradient(circle, rgba(255,255,255,0.1) 0%, transparent 70%);
+            border-radius: 50%;
+            transform: translate(30%, -30%);
+        }
+        
+        .header-content { position: relative; z-index: 1; }
+        
+        .header h1 { 
+            font-size: 32px;
+            font-weight: 700;
+            margin-bottom: 8px;
+            letter-spacing: -0.5px;
+        }
+        
+        .header-meta { 
+            display: flex;
+            gap: 30px;
+            margin-top: 15px;
+            font-size: 14px;
+            opacity: 0.95;
+        }
+        
+        .header-meta-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .header-meta-label { 
+            font-weight: 600;
+            opacity: 0.8;
+        }
+        
+        .executive-summary {
+            padding: 40px;
+            background: var(--gray-50);
+            border-bottom: 1px solid var(--gray-200);
+        }
+        
+        .summary-title {
+            font-size: 20px;
+            font-weight: 700;
+            margin-bottom: 25px;
+            color: var(--gray-900);
+        }
+        
+        .metrics-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+        
+        .metric-card {
+            background: white;
+            padding: 24px;
+            border-radius: var(--radius-md);
+            box-shadow: var(--shadow-sm);
+            border: 1px solid var(--gray-200);
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        
+        .metric-card:hover {
+            transform: translateY(-2px);
+            box-shadow: var(--shadow-md);
+        }
+        
+        .metric-card-header {
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--gray-700);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 12px;
+        }
+        
+        .metric-card-value {
+            font-size: 42px;
+            font-weight: 700;
+            line-height: 1;
+        }
+        
+        .metric-card.total .metric-card-value { color: var(--gray-900); }
+        .metric-card.pass .metric-card-value { color: var(--success-color); }
+        .metric-card.fail .metric-card-value { color: var(--danger-color); }
+        .metric-card.warn .metric-card-value { color: var(--warning-color); }
+        .metric-card.info .metric-card-value { color: var(--info-color); }
+        
+        .charts-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+        }
+        
+        .chart-container {
+            background: white;
+            padding: 24px;
+            border-radius: var(--radius-md);
+            box-shadow: var(--shadow-sm);
+            border: 1px solid var(--gray-200);
+        }
+        
+        .chart-title {
+            font-size: 16px;
+            font-weight: 600;
+            margin-bottom: 20px;
+            color: var(--gray-900);
+        }
+        
+        .chart-wrapper {
+            position: relative;
+            height: 250px;
+        }
+        
+        .controls {
+            padding: 30px 40px;
+            background: white;
+            border-bottom: 1px solid var(--gray-200);
+            display: flex;
+            gap: 20px;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+        
+        .search-box {
+            flex: 1;
+            min-width: 250px;
+            position: relative;
+        }
+        
+        .search-box input {
+            width: 100%;
+            padding: 12px 40px 12px 16px;
+            border: 2px solid var(--gray-300);
+            border-radius: var(--radius-md);
+            font-size: 14px;
+            transition: border-color 0.2s;
+        }
+        
+        .search-box input:focus {
+            outline: none;
+            border-color: var(--primary-color);
+        }
+        
+        .search-icon {
+            position: absolute;
+            right: 12px;
+            top: 50%;
+            transform: translateY(-50%);
+            color: var(--gray-700);
+        }
+        
+        .filter-group {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+        
+        .filter-btn {
+            padding: 8px 16px;
+            border: 2px solid var(--gray-300);
+            background: white;
+            border-radius: var(--radius-md);
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        
+        .filter-btn:hover {
+            border-color: var(--primary-color);
+            color: var(--primary-color);
+        }
+        
+        .filter-btn.active {
+            background: var(--primary-color);
+            border-color: var(--primary-color);
+            color: white;
+        }
+        
+        .results-section {
+            padding: 40px;
+        }
+        
+        .results-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 30px;
+        }
+        
+        .results-title {
+            font-size: 24px;
+            font-weight: 700;
+            color: var(--gray-900);
+        }
+        
+        .results-count {
+            font-size: 14px;
+            color: var(--gray-700);
+            background: var(--gray-100);
+            padding: 8px 16px;
+            border-radius: var(--radius-md);
+        }
+        
+        .findings-grid {
+            display: grid;
+            gap: 20px;
+        }
+        
+        .finding-card {
+            background: white;
+            border: 1px solid var(--gray-200);
+            border-radius: var(--radius-md);
+            padding: 24px;
+            box-shadow: var(--shadow-sm);
+            transition: all 0.2s;
+        }
+        
+        .finding-card:hover {
+            box-shadow: var(--shadow-md);
+            border-color: var(--gray-300);
+        }
+        
+        .finding-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: start;
+            margin-bottom: 16px;
+            gap: 20px;
+        }
+        
+        .finding-title-group {
+            flex: 1;
+        }
+        
+        .finding-name {
+            font-size: 18px;
+            font-weight: 600;
+            color: var(--gray-900);
+            margin-bottom: 8px;
+        }
+        
+        .finding-badges {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+        
+        .badge {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: var(--radius-sm);
+            font-size: 12px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.3px;
+        }
+        
+        .badge-status-pass { background: #dff6dd; color: #107c10; }
+        .badge-status-fail { background: #fde7e9; color: #d13438; }
+        .badge-status-warning { background: #fff4ce; color: #8a4600; }
+        .badge-status-info { background: #e1f5fe; color: #0078d4; }
+        
+        .badge-severity-critical { background: #d13438; color: white; }
+        .badge-severity-high { background: #ff8c00; color: white; }
+        .badge-severity-medium { background: #ffd700; color: #333; }
+        .badge-severity-low { background: #90ee90; color: #333; }
+        .badge-severity-info { background: #e1f5fe; color: #0078d4; }
+        
+        .badge-category {
+            background: var(--primary-color);
+            color: white;
+        }
+        
+        .finding-body {
+            margin-top: 16px;
+            padding-top: 16px;
+            border-top: 1px solid var(--gray-200);
+        }
+        
+        .finding-section {
+            margin-bottom: 16px;
+        }
+        
+        .finding-section:last-child {
+            margin-bottom: 0;
+        }
+        
+        .finding-label {
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--gray-700);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 8px;
+        }
+        
+        .finding-content {
+            font-size: 14px;
+            color: var(--gray-900);
+            line-height: 1.6;
+        }
+        
+        .finding-content ul {
+            margin-left: 20px;
+            margin-top: 8px;
+        }
+        
+        .finding-content li {
+            margin: 4px 0;
+        }
+        
+        .finding-content code {
+            background: var(--gray-100);
+            padding: 2px 6px;
+            border-radius: var(--radius-sm);
+            font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+            font-size: 13px;
+            color: var(--danger-color);
+        }
+        
+        .doc-link {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            color: var(--primary-color);
+            text-decoration: none;
+            font-weight: 600;
+            font-size: 14px;
+            transition: color 0.2s;
+        }
+        
+        .doc-link:hover {
+            color: var(--primary-dark);
+            text-decoration: underline;
+        }
+        
+        .empty-state {
+            text-align: center;
+            padding: 60px 20px;
+            color: var(--gray-700);
+        }
+        
+        .empty-state-icon {
+            font-size: 64px;
+            margin-bottom: 16px;
+            opacity: 0.5;
+        }
+        
+        .empty-state-text {
+            font-size: 18px;
+            font-weight: 600;
+        }
+        
+        @media print {
+            body { padding: 0; background: white; }
+            .container { box-shadow: none; }
+            .controls { display: none; }
+            .finding-card { page-break-inside: avoid; }
+            .chart-wrapper { height: 200px; }
+        }
+        
+        @media (max-width: 768px) {
+            .header { padding: 24px; }
+            .header h1 { font-size: 24px; }
+            .header-meta { flex-direction: column; gap: 10px; }
+            .executive-summary { padding: 24px; }
+            .metrics-grid { grid-template-columns: repeat(2, 1fr); }
+            .charts-grid { grid-template-columns: 1fr; }
+            .results-section { padding: 24px; }
+            .controls { padding: 20px; }
+        }
     </style>
 </head>
 <body>
     <div class="container">
         <div class="header">
-            <h1>🔒 Microsoft 365 Tenant Assessment Report</h1>
-            <p><strong>Tenant:</strong> {{TENANT_NAME}} | <strong>Assessment Date:</strong> {{ASSESSMENT_DATE}}</p>
-        </div>
-        
-        <div class="summary">
-            <div class="summary-card">
-                <h3>Total Checks</h3>
-                <div class="number">{{TOTAL_CHECKS}}</div>
-            </div>
-            <div class="summary-card pass">
-                <h3>Passed</h3>
-                <div class="number">{{PASS_COUNT}}</div>
-            </div>
-            <div class="summary-card fail">
-                <h3>Failed</h3>
-                <div class="number">{{FAIL_COUNT}}</div>
-            </div>
-            <div class="summary-card warn">
-                <h3>Warnings</h3>
-                <div class="number">{{WARN_COUNT}}</div>
-            </div>
-            <div class="summary-card info">
-                <h3>Informational</h3>
-                <div class="number">{{INFO_COUNT}}</div>
-            </div>
-            <div class="summary-card">
-                <h3>Compliance Score</h3>
-                <div class="number" style="color: #0078d4;">{{PASS_PERCENTAGE}}%</div>
+            <div class="header-content">
+                <h1>Microsoft 365 Security Assessment Report</h1>
+                <div class="header-meta">
+                    <div class="header-meta-item">
+                        <span class="header-meta-label">Tenant:</span>
+                        <span>{{TENANT_NAME}}</span>
+                    </div>
+                    <div class="header-meta-item">
+                        <span class="header-meta-label">Assessment Date:</span>
+                        <span>{{ASSESSMENT_DATE}}</span>
+                    </div>
+                    <div class="header-meta-item">
+                        <span class="header-meta-label">Compliance Score:</span>
+                        <span>{{PASS_PERCENTAGE}}%</span>
+                    </div>
+                </div>
             </div>
         </div>
         
-        <div class="results">
-            <h2>Assessment Results</h2>
-            <table>
-                <thead>
-                    <tr>
-                        <th>Check Name</th>
-                        <th>Category</th>
-                        <th>Status</th>
-                        <th>Severity</th>
-                        <th>Finding</th>
-                        <th>Recommendation</th>
-                        <th>Docs</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {{RESULTS_TABLE}}
-                </tbody>
-            </table>
+        <div class="executive-summary">
+            <h2 class="summary-title">Executive Summary</h2>
+            
+            <div class="metrics-grid">
+                <div class="metric-card total">
+                    <div class="metric-card-header">Total Checks</div>
+                    <div class="metric-card-value">{{TOTAL_CHECKS}}</div>
+                </div>
+                <div class="metric-card pass">
+                    <div class="metric-card-header">Passed</div>
+                    <div class="metric-card-value">{{PASS_COUNT}}</div>
+                </div>
+                <div class="metric-card fail">
+                    <div class="metric-card-header">Failed</div>
+                    <div class="metric-card-value">{{FAIL_COUNT}}</div>
+                </div>
+                <div class="metric-card warn">
+                    <div class="metric-card-header">Warnings</div>
+                    <div class="metric-card-value">{{WARN_COUNT}}</div>
+                </div>
+                <div class="metric-card info">
+                    <div class="metric-card-header">Informational</div>
+                    <div class="metric-card-value">{{INFO_COUNT}}</div>
+                </div>
+            </div>
+            
+            <div class="charts-grid">
+                <div class="chart-container">
+                    <div class="chart-title">Status Distribution</div>
+                    <div class="chart-wrapper">
+                        <canvas id="statusChart"></canvas>
+                    </div>
+                </div>
+                <div class="chart-container">
+                    <div class="chart-title">Findings by Severity</div>
+                    <div class="chart-wrapper">
+                        <canvas id="severityChart"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="controls">
+            <div class="search-box">
+                <input type="text" id="searchInput" placeholder="Search findings...">
+                <span class="search-icon">🔍</span>
+            </div>
+            <div class="filter-group">
+                <button class="filter-btn active" data-filter="all">All</button>
+                <button class="filter-btn" data-filter="fail">Failed</button>
+                <button class="filter-btn" data-filter="warning">Warnings</button>
+                <button class="filter-btn" data-filter="pass">Passed</button>
+                <button class="filter-btn" data-filter="info">Info</button>
+            </div>
+        </div>
+        
+        <div class="results-section">
+            <div class="results-header">
+                <h2 class="results-title">Detailed Findings</h2>
+                <div class="results-count"><span id="visibleCount">{{TOTAL_CHECKS}}</span> of {{TOTAL_CHECKS}} findings</div>
+            </div>
+            
+            <div class="findings-grid" id="findingsGrid">
+                {{RESULTS_CARDS}}
+            </div>
         </div>
     </div>
+    
+    <script>
+        // Chart.js configuration
+        const statusData = {
+            labels: ['Passed', 'Failed', 'Warning', 'Info'],
+            datasets: [{
+                data: [{{PASS_COUNT}}, {{FAIL_COUNT}}, {{WARN_COUNT}}, {{INFO_COUNT}}],
+                backgroundColor: ['#107c10', '#d13438', '#ff8c00', '#0078d4'],
+                borderWidth: 0
+            }]
+        };
+        
+        const severityData = {
+            labels: {{SEVERITY_LABELS}},
+            datasets: [{
+                label: 'Findings',
+                data: {{SEVERITY_COUNTS}},
+                backgroundColor: ['#d13438', '#ff8c00', '#ffd700', '#90ee90', '#e1f5fe'],
+                borderWidth: 0
+            }]
+        };
+        
+        new Chart(document.getElementById('statusChart'), {
+            type: 'doughnut',
+            data: statusData,
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { position: 'bottom' }
+                }
+            }
+        });
+        
+        new Chart(document.getElementById('severityChart'), {
+            type: 'bar',
+            data: severityData,
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: false }
+                },
+                scales: {
+                    y: { beginAtZero: true, ticks: { precision: 0 } }
+                }
+            }
+        });
+        
+        // Search and filter functionality
+        const searchInput = document.getElementById('searchInput');
+        const filterBtns = document.querySelectorAll('.filter-btn');
+        const findingCards = document.querySelectorAll('.finding-card');
+        const visibleCount = document.getElementById('visibleCount');
+        
+        let currentFilter = 'all';
+        
+        function updateVisibleCount() {
+            const visible = document.querySelectorAll('.finding-card:not([style*="display: none"])').length;
+            visibleCount.textContent = visible;
+        }
+        
+        function filterFindings() {
+            const searchTerm = searchInput.value.toLowerCase();
+            
+            findingCards.forEach(card => {
+                const text = card.textContent.toLowerCase();
+                const matchesSearch = text.includes(searchTerm);
+                const status = card.dataset.status;
+                const matchesFilter = currentFilter === 'all' || status === currentFilter;
+                
+                card.style.display = matchesSearch && matchesFilter ? 'block' : 'none';
+            });
+            
+            updateVisibleCount();
+        }
+        
+        searchInput.addEventListener('input', filterFindings);
+        
+        filterBtns.forEach(btn => {
+            btn.addEventListener('click', () => {
+                filterBtns.forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                currentFilter = btn.dataset.filter;
+                filterFindings();
+            });
+        });
+    </script>
 </body>
 </html>
 '@
