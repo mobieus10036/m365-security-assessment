@@ -1,5 +1,7 @@
 # M365 Security Guardian 🛡️
 
+**Official GitHub repository:** [https://github.com/mobieus10036/m365-security-assessment](https://github.com/mobieus10036/m365-security-assessment)
+
 **Rapid, actionable Microsoft 365 security assessment for modern enterprises.**
 
 ![Build Status](https://img.shields.io/github/workflow/status/mobieus10036/m365-security-guardian/CI)
