@@ -30,9 +30,28 @@ function Test-LicenseOptimization {
     try {
         Write-Verbose "Analyzing license optimization opportunities..."
 
-        # Get all users with licenses
-        $licensedUsers = Get-MgUser -All -Property Id, DisplayName, UserPrincipalName, AccountEnabled, AssignedLicenses, SignInActivity |
-                         Where-Object { $_.AssignedLicenses.Count -gt 0 }
+        # Get all users with licenses, handle 403 Forbidden (non-premium/B2C tenant)
+        try {
+            $licensedUsers = Get-MgUser -All -Property Id, DisplayName, UserPrincipalName, AccountEnabled, AssignedLicenses, SignInActivity |
+                             Where-Object { $_.AssignedLicenses.Count -gt 0 }
+        } catch {
+            if ($_.Exception.Message -match 'Authentication_RequestFromNonPremiumTenantOrB2CTenant' -or $_.Exception.Message -match 'Status: 403') {
+                return [PSCustomObject]@{
+                    CheckName = "License Optimization"
+                    Category = "Licensing"
+                    Status = "Skipped"
+                    Severity = "Info"
+                    Message = "This assessment requires a Microsoft Graph premium license. Your tenant does not have the required license or is a B2C tenant."
+                    Details = @{}
+                    InactiveMailboxes = @()
+                    Recommendation = "Upgrade your tenant to include Microsoft Graph premium licensing or run this assessment on a supported tenant."
+                    DocumentationUrl = "https://learn.microsoft.com/graph/errors"
+                    RemediationSteps = @("See Microsoft Graph licensing requirements.")
+                }
+            } else {
+                throw $_
+            }
+        }
 
         if ($null -eq $licensedUsers -or @($licensedUsers).Count -eq 0) {
             return [PSCustomObject]@{
