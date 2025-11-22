@@ -142,6 +142,10 @@ function Test-PrivilegedAccounts {
             $Config.Security.PrivilegedAccountMFARequired
         } else { $true }
 
+        $maxPrivilegedAccounts = if ($null -ne $Config.Security.MaxPrivilegedAccounts) {
+            $Config.Security.MaxPrivilegedAccounts
+        } else { 3 }
+
         $status = "Pass"
         $severity = "Low"
         $issues = @()
@@ -153,13 +157,22 @@ function Test-PrivilegedAccounts {
             $issues += "$($privUsersWithoutMFA.Count) privileged accounts without MFA: $($privUsersWithoutMFA -join ', ')"
         }
 
+        # Check if total privileged account count exceeds threshold
+        if ($totalPrivilegedUsers -gt $maxPrivilegedAccounts) {
+            if ($status -eq "Pass") { $status = "Warning" }
+            # Only escalate severity if it's currently lower than Medium
+            if ($severity -in @("Low", "Info")) { $severity = "Medium" }
+            $issues += "Total privileged account count ($totalPrivilegedUsers) exceeds recommended maximum ($maxPrivilegedAccounts)"
+        }
+
         # Check for excessive Global Admins
         $globalAdminRole = $roleDetails | Where-Object { $_.RoleName -eq 'Global Administrator' }
         $globalAdminCount = if ($globalAdminRole) { $globalAdminRole.MemberCount } else { 0 }
 
         if ($globalAdminCount -gt 5) {
             if ($status -eq "Pass") { $status = "Warning" }
-            if ($severity -eq "Low") { $severity = "Medium" }
+            # Only escalate severity if it's currently lower than Medium
+            if ($severity -in @("Low", "Info")) { $severity = "Medium" }
             $issues += "Excessive Global Administrators ($globalAdminCount). Recommended: 2-5"
         }
 
@@ -194,7 +207,7 @@ function Test-PrivilegedAccounts {
             }
             PrivilegedAccounts = $privilegedAccountDetails
             Recommendation = if ($status -ne "Pass") {
-                "Enforce MFA for all privileged accounts immediately. Use dedicated admin accounts (not user accounts). Limit Global Admin role to 2-5 accounts."
+                "Enforce MFA for all privileged accounts immediately. Use dedicated admin accounts (not user accounts). Limit total privileged accounts to $maxPrivilegedAccounts or fewer. Limit Global Admin role to 2-5 accounts."
             } else {
                 "Privileged account security meets requirements. Review regularly and use Privileged Identity Management (PIM) for just-in-time access."
             }
@@ -202,10 +215,11 @@ function Test-PrivilegedAccounts {
             RemediationSteps = @(
                 "1. Require MFA for all privileged accounts via Conditional Access"
                 "2. Create dedicated cloud-only admin accounts (admin@domain.onmicrosoft.com)"
-                "3. Limit Global Administrator count to 2-5 emergency access accounts"
-                "4. Implement Privileged Identity Management (PIM) for just-in-time access"
-                "5. Enable break-glass emergency access accounts with strong security"
-                "6. Regular access reviews for privileged role assignments"
+                "3. Limit total privileged account count to $maxPrivilegedAccounts or fewer to minimize attack surface"
+                "4. Limit Global Administrator count to 2-5 emergency access accounts"
+                "5. Implement Privileged Identity Management (PIM) for just-in-time access"
+                "6. Enable break-glass emergency access accounts with strong security"
+                "7. Regular access reviews for privileged role assignments"
             )
         }
     }
