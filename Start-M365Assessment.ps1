@@ -189,6 +189,7 @@ function Get-DefaultConfiguration {
         Security = @{
             MFAEnforcementThreshold = 95
             PrivilegedAccountMFARequired = $true
+            MaxPrivilegedAccounts = 3
             LegacyAuthAllowed = $false
             MinConditionalAccessPolicies = 1
         }
