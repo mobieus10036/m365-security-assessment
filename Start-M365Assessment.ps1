@@ -307,7 +307,7 @@ function Get-ModulesToRun {
                         
                         # Display result
                         $statusMessage = "      [$($result.Status)] $($result.Message)"
-                        if ($result.Status -eq 'Fail') {
+                        if ($result.Status -in @('Fail', 'Warning')) {
                             Write-Warning $statusMessage
                         } else {
                             Write-Information $statusMessage -InformationAction Continue

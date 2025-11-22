@@ -145,6 +145,7 @@ function Test-PrivilegedAccounts {
         $status = "Pass"
         $severity = "Low"
         $issues = @()
+        $maxPrivilegedAccounts = 3
 
         if ($requireMFA -and $privUsersWithoutMFA.Count -gt 0) {
             $status = "Fail"
@@ -160,6 +161,13 @@ function Test-PrivilegedAccounts {
             if ($status -eq "Pass") { $status = "Warning" }
             if ($severity -eq "Low") { $severity = "Medium" }
             $issues += "Excessive Global Administrators ($globalAdminCount). Recommended: 2-5"
+        }
+
+        # Check for excessive privileged accounts overall
+        if ($totalPrivilegedUsers -gt $maxPrivilegedAccounts) {
+            if ($status -eq "Pass") { $status = "Warning" }
+            if ($severity -eq "Low") { $severity = "Medium" }
+            $issues += "Privileged accounts exceed recommended maximum of $maxPrivilegedAccounts (found $totalPrivilegedUsers)"
         }
 
         $message = "$totalPrivilegedUsers privileged accounts found"
@@ -178,6 +186,7 @@ function Test-PrivilegedAccounts {
             Message = $message
             Details = @{
                 TotalPrivilegedUsers = $totalPrivilegedUsers
+                MaxRecommendedPrivilegedAccounts = $maxPrivilegedAccounts
                 PrivilegedUsersWithoutMFA = $privUsersWithoutMFA.Count
                 GlobalAdminCount = $globalAdminCount
                 RoleBreakdown = $roleDetails
