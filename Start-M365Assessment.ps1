@@ -523,6 +523,12 @@ function Export-HTMLReport {
             $findingContent += "<br><br><strong>Domain Email Authentication Details:</strong><br>"
             $findingContent += "<table style='width: 100%; margin-top: 10px; border-collapse: collapse; font-size: 13px;'>"
             $findingContent += "<tr style='background: var(--gray-100); font-weight: 600;'><td style='padding: 8px; border: 1px solid var(--gray-300);'>Domain</td><td style='padding: 8px; border: 1px solid var(--gray-300);'>SPF</td><td style='padding: 8px; border: 1px solid var(--gray-300);'>DKIM</td><td style='padding: 8px; border: 1px solid var(--gray-300);'>DMARC</td></tr>"
+            $statusDot = @{
+                Green = "<span style='display:inline-block;width:10px;height:10px;border-radius:50%;background:#107c10;'></span>"
+                Amber = "<span style='display:inline-block;width:10px;height:10px;border-radius:50%;background:#ffb900;'></span>"
+                Red   = "<span style='display:inline-block;width:10px;height:10px;border-radius:50%;background:#d13438;'></span>"
+                Gray  = "<span style='display:inline-block;width:10px;height:10px;border-radius:50%;background:#8a8886;'></span>"
+            }
             foreach ($domain in $result.DomainDetails) {
                 $domainSafe = ConvertTo-HtmlSafe $domain.Domain
                 $spfSafe = ConvertTo-HtmlSafe $domain.SPF
@@ -530,18 +536,19 @@ function Export-HTMLReport {
                 $dmarcSafe = ConvertTo-HtmlSafe $domain.DMARC
                 
                 $spfIcon = switch -Regex ($domain.SPF) {
-                    "^Valid" { "✅" }
-                    "^Missing" { "❌" }
-                    "^Invalid" { "⚠️" }
-                    default { "❓" }
+                    "^Valid" { $statusDot.Green }
+                    "^Missing" { $statusDot.Red }
+                    "^Invalid" { $statusDot.Amber }
+                    default { $statusDot.Gray }
                 }
-                $dkimIcon = if ($domain.DKIM -eq "Enabled") { "✅" } else { "❌" }
+                $dkimIcon = if ($domain.DKIM -eq "Enabled") { $statusDot.Green } else { $statusDot.Red }
                 $dmarcIcon = switch -Regex ($domain.DMARC) {
-                    "^Valid" { "✅" }
-                    "^Missing" { "❌" }
-                    "^Weak" { "⚠️" }
-                    default { "❓" }
+                    "^Valid" { $statusDot.Green }
+                    "^Missing" { $statusDot.Red }
+                    "^Weak" { $statusDot.Amber }
+                    default { $statusDot.Gray }
                 }
+                
                 $findingContent += "<tr><td style='padding: 8px; border: 1px solid var(--gray-300);'><code>$domainSafe</code></td>"
                 $findingContent += "<td style='padding: 8px; border: 1px solid var(--gray-300);'>$spfIcon $spfSafe</td>"
                 $findingContent += "<td style='padding: 8px; border: 1px solid var(--gray-300);'>$dkimIcon $dkimSafe</td>"
