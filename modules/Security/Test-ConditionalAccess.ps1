@@ -50,6 +50,8 @@ function Test-ConditionalAccess {
         if ($Config.Security.BreakGlassAccounts) { $breakGlass = @($Config.Security.BreakGlassAccounts) }
         $minPolicies = if ($Config.Security.MinConditionalAccessPolicies) { $Config.Security.MinConditionalAccessPolicies } else { 1 }
         $staleReportOnlyDays = if ($Config.Security.ReportOnlyStaleDays) { $Config.Security.ReportOnlyStaleDays } else { 30 }
+        $longStaleReportOnlyDays = if ($Config.Security.LongStaleReportOnlyDays) { $Config.Security.LongStaleReportOnlyDays } else { 90 }
+        $maxExclusions = if ($null -ne $Config.Security.MaxConditionalAccessExclusions) { $Config.Security.MaxConditionalAccessExclusions } else { $null }
         $adminAppIds = @(
             # Azure Management / portal
             "797f4846-ba00-4fd7-ba43-dac1f8f63013",
@@ -70,6 +72,13 @@ function Test-ConditionalAccess {
                 Id = $policy.Id
             }
         }
+
+        # Per-policy analysis for risks and improvement opportunities (additive; does not alter existing checks)
+        $policyFindings = @()
+        foreach ($policy in $caPolicies) {
+            $policyFindings += _analyzePolicy $policy $breakGlass $adminAppIds $staleReportOnlyDays $longStaleReportOnlyDays $maxExclusions
+        }
+        $policyFindingsSummary = _collapseFindingsByMessage $policyFindings
 
         # Evaluate key posture controls
         $baselineMfa = $caPolicies | Where-Object { (_isEnabled $_) -and (_coversAllUsers $_ $breakGlass) -and (_enforcesMfa $_) }
@@ -147,6 +156,14 @@ function Test-ConditionalAccess {
         }
 
         $message = "$enabledPolicies enabled policies found"
+        $policiesWithRisks = ($policyFindings | Where-Object { $_.Risks.Count -gt 0 }).Count
+        $policiesConsidered = $policyFindings.Count
+        $caScore = if ($policiesConsidered -gt 0) {
+            [math]::Round((($policiesConsidered - $policiesWithRisks) / $policiesConsidered) * 100, 1)
+        } else { 0 }
+        if ($policiesConsidered -gt 0) {
+            $message += " | CA posture score: $caScore% of policies have no flagged risks"
+        }
         if ($issues.Count -gt 0) {
             $message += ". Issues: $($issues.Message -join '; ')"
         }
@@ -174,6 +191,8 @@ function Test-ConditionalAccess {
                 EnabledPolicies = $enabledPolicies
                 ReportOnlyPolicies = $reportOnlyPolicies
                 DisabledPolicies = $disabledPolicies
+                PolicyFindings = $policyFindings
+                PolicyFindingsSummary = $policyFindingsSummary
                 BaselineMFA = [bool]$baselineMfa
                 LegacyAuthBlocked = [bool]$legacyBlock
                 LegacyBlockComplete = [bool]$legacyComplete
@@ -186,6 +205,9 @@ function Test-ConditionalAccess {
                 Issues = $issues
             }
             EnabledPolicies = $enabledPolicyList
+            PolicyFindings = $policyFindings
+            PolicyFindingsSummary = $policyFindingsSummary
+            ConditionalAccessScore = $caScore
             Recommendation = if ($recommendations.Count -gt 0) {
                 $recommendations -join ". "
             } else {
@@ -239,6 +261,20 @@ function _enforcesMfa($policy) {
     $grant = $policy.GrantControls
     if ($grant.BuiltInControls -contains 'mfa') { return $true }
     if ($grant.AuthenticationStrength -and $grant.AuthenticationStrength.Id) { return $true }
+    return $false
+}
+
+function _blocksAccess($policy) {
+    $grant = $policy.GrantControls
+    return $grant -and ($grant.BuiltInControls -contains 'block')
+}
+
+function _hasGrantControls($policy) {
+    $grant = $policy.GrantControls
+    if (-not $grant) { return $false }
+    if ($grant.BuiltInControls -and $grant.BuiltInControls.Count -gt 0) { return $true }
+    if ($grant.AuthenticationStrength -and $grant.AuthenticationStrength.Id) { return $true }
+    if ($grant.TermsOfUse -and $grant.TermsOfUse.Count -gt 0) { return $true }
     return $false
 }
 
@@ -304,4 +340,140 @@ function _isReportOnlyStale($policy, $staleDays) {
     if (-not $policy.ModifiedDateTime) { return $false }
     $modified = [datetime]$policy.ModifiedDateTime
     return $modified -lt (Get-Date).AddDays(-1 * [int]$staleDays)
+}
+
+function _hasPolicyTargets($policy) {
+    if (-not $policy.Conditions -or -not $policy.Conditions.Users) { return $false }
+    $users = $policy.Conditions.Users
+    $includes = @($users.IncludeUsers) + @($users.IncludeGroups) + @($users.IncludeRoles)
+    return $includes.Count -gt 0
+}
+
+function _analyzePolicy($policy, $breakGlass, $adminAppIds, $staleReportOnlyDays, $longStaleReportOnlyDays, $maxExclusions) {
+    $risks = @()
+    $opportunities = @()
+
+    if ($policy.State -eq 'disabled') {
+        $risks += _makeFinding "Policy is disabled; remove if unused or enable after validation" "High"
+    }
+
+    if (_isReportOnlyStale $policy $staleReportOnlyDays) {
+        $staleSeverity = if ($policy.ModifiedDateTime -and ([datetime]$policy.ModifiedDateTime) -lt (Get-Date).AddDays(-1 * [int]$longStaleReportOnlyDays)) { "Medium" } else { "Low" }
+        $risks += _makeFinding "Report-only policy has been stale for more than $staleReportOnlyDays days" $staleSeverity
+    }
+    elseif ($policy.State -eq 'enabledForReportingButNotEnforced') {
+        $opportunities += _makeFinding "Report-only policy; enforce after successful validation" "Low"
+    }
+
+    if (_overbroadExclusions $policy $breakGlass) {
+        $risks += _makeFinding "Excludes accounts beyond configured break-glass; tighten exclusions" "Medium"
+    }
+
+    if (($maxExclusions -ne $null) -and (_coversAllUsers $policy $breakGlass)) {
+        $exclusionCount = @($policy.Conditions.Users.ExcludeUsers).Count
+        if ($exclusionCount -gt $maxExclusions) {
+            $risks += _makeFinding "Policy excluding $exclusionCount accounts; exceeds configured limit of $maxExclusions" "Medium"
+        }
+    }
+
+    if (-not (_hasGrantControls $policy)) {
+        $risks += _makeFinding "No grant controls; policy does not enforce MFA/block/other requirements" "High"
+    }
+    else {
+        if (_coversAllUsers $policy $breakGlass -and -not (_enforcesMfa $policy -or _blocksAccess $policy)) {
+            $risks += _makeFinding "Targets all users without MFA/strong auth or block control" "High"
+        }
+
+        if (_targetsAdmins $policy -and -not _enforcesMfa $policy) {
+            $risks += _makeFinding "Targets privileged roles/groups without MFA or Authentication Strength" "High"
+        }
+
+        if (_enforcesMfa $policy -and -not _hasAuthStrength $policy) {
+            $opportunities += _makeFinding "Upgrade MFA requirement to Authentication Strength (phishing-resistant)" "Medium"
+        }
+
+        if (_coversAdminApps $policy $adminAppIds -and -not _hasSessionControls $policy) {
+            $opportunities += _makeFinding "Add session controls (sign-in frequency/persistent browser governance) for admin/critical apps" "Medium"
+        }
+    }
+
+    $clientApps = @($policy.Conditions.ClientAppTypes | ForEach-Object { $_.ToLower() })
+    if ($clientApps -and ($clientApps -contains 'exchangeactivesync' -or $clientApps -contains 'other') -and (-not (_blocksAccess $policy))) {
+        $opportunities += _makeFinding "Legacy client types targeted without a block control; convert to a legacy auth block policy" "Medium"
+    }
+
+    if (-not (_hasPolicyTargets $policy)) {
+        $opportunities += _makeFinding "Policy has no user/group/role targets; validate scope or remove unused policy" "Low"
+    }
+
+    return [PSCustomObject]@{
+        DisplayName = $policy.DisplayName
+        State = $policy.State
+        Id = $policy.Id
+        Risks = $risks
+        Opportunities = $opportunities
+    }
+}
+
+function _makeFinding($message, $severity) {
+    return [PSCustomObject]@{
+        Message = $message
+        Severity = $severity
+    }
+}
+
+function _severityRank($severity) {
+    if (-not $severity) { return 0 }
+    switch ($severity.ToLower()) {
+        'critical' { return 5 }
+        'high' { return 4 }
+        'medium' { return 3 }
+        'low' { return 2 }
+        default { return 1 }
+    }
+}
+
+function _maxSeverityFromGroup($items) {
+    if (-not $items -or $items.Count -eq 0) { return $null }
+    $sorted = $items | Sort-Object { - (_severityRank $_.Severity) }
+    return $sorted[0].Severity
+}
+
+function _collapseFindingsByMessage($policyFindings) {
+    $allRisks = @()
+    $allOpps = @()
+
+    foreach ($pf in $policyFindings) {
+        if ($pf.Risks) { $allRisks += $pf.Risks }
+        if ($pf.Opportunities) { $allOpps += $pf.Opportunities }
+    }
+
+    $collapsedRisks = @()
+    if ($allRisks.Count -gt 0) {
+        $grouped = $allRisks | Group-Object -Property Message
+        foreach ($g in $grouped) {
+            $collapsedRisks += [PSCustomObject]@{
+                Message = $g.Name
+                Count = $g.Count
+                Severity = _maxSeverityFromGroup $g.Group
+            }
+        }
+    }
+
+    $collapsedOpportunities = @()
+    if ($allOpps.Count -gt 0) {
+        $grouped = $allOpps | Group-Object -Property Message
+        foreach ($g in $grouped) {
+            $collapsedOpportunities += [PSCustomObject]@{
+                Message = $g.Name
+                Count = $g.Count
+                Severity = _maxSeverityFromGroup $g.Group
+            }
+        }
+    }
+
+    return [PSCustomObject]@{
+        Risks = $collapsedRisks
+        Opportunities = $collapsedOpportunities
+    }
 }

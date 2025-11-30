@@ -6,6 +6,8 @@
     "LegacyAuthAllowed": false,
     "MinConditionalAccessPolicies": 1,
     "ReportOnlyStaleDays": 30,
+    "LongStaleReportOnlyDays": 90,
+    "MaxConditionalAccessExclusions": null,
     "BreakGlassAccounts": []
   },
   "Compliance": {

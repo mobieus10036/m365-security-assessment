@@ -209,6 +209,9 @@ function Get-DefaultConfiguration {
             MaxPrivilegedAccounts = 3
             LegacyAuthAllowed = $false
             MinConditionalAccessPolicies = 1
+            ReportOnlyStaleDays = 30
+            LongStaleReportOnlyDays = 90
+            MaxConditionalAccessExclusions = $null
         }
         Compliance = @{
             DLPPoliciesRequired = $true
@@ -464,6 +467,38 @@ function Export-Results {
             Write-Info "  → $($caResult.EnabledPolicies.Count) policy/policies exported"
         }
 
+        # Export Conditional Access per-policy findings to separate CSV
+        if ($caResult -and $caResult.PolicyFindings -and $caResult.PolicyFindings.Count -gt 0) {
+            $caFindingsCsvPath = Join-Path $OutputPath "$($baseFileName)_ConditionalAccessPolicyFindings.csv"
+            $flattened = @()
+            foreach ($pf in $caResult.PolicyFindings) {
+                $riskMessages = ""
+                $riskSeverities = ""
+                $oppMessages = ""
+                $oppSeverities = ""
+                if ($pf.Risks -and $pf.Risks.Count -gt 0) {
+                    $riskMessages = ($pf.Risks | ForEach-Object { $_.Message }) -join '; '
+                    $riskSeverities = ($pf.Risks | ForEach-Object { $_.Severity }) -join '; '
+                }
+                if ($pf.Opportunities -and $pf.Opportunities.Count -gt 0) {
+                    $oppMessages = ($pf.Opportunities | ForEach-Object { $_.Message }) -join '; '
+                    $oppSeverities = ($pf.Opportunities | ForEach-Object { $_.Severity }) -join '; '
+                }
+                $flattened += [PSCustomObject]@{
+                    DisplayName = $pf.DisplayName
+                    State = $pf.State
+                    Id = $pf.Id
+                    RiskMessages = $riskMessages
+                    RiskSeverities = $riskSeverities
+                    OpportunityMessages = $oppMessages
+                    OpportunitySeverities = $oppSeverities
+                }
+            }
+            $flattened | Export-Csv -Path $caFindingsCsvPath -NoTypeInformation -Encoding UTF8
+            Write-Success "Conditional Access policy findings CSV: $caFindingsCsvPath"
+            Write-Info "  � $($flattened.Count) policy finding record(s) exported"
+        }
+
         # Export users without MFA to separate CSV
         $mfaResult = $script:AssessmentResults | Where-Object { $_.CheckName -eq "MFA Enforcement" -and $_.UsersWithoutMFA }
         if ($mfaResult -and $mfaResult.UsersWithoutMFA.Count -gt 0) {
@@ -635,6 +670,118 @@ function Export-HTMLReport {
                 $findingContent += "</li>"
             }
             $findingContent += "</ul>"
+        }
+
+        # Show Conditional Access posture score when available
+        if ($result.CheckName -eq "Conditional Access Policies" -and $null -ne $result.ConditionalAccessScore) {
+            $scoreSafe = ConvertTo-HtmlSafe $result.ConditionalAccessScore
+            $findingContent += "<br><br><strong>Conditional Access Posture Score:</strong> $scoreSafe% of policies have no flagged risks"
+        }
+
+        # Handle per-policy Conditional Access analysis (risks/opportunities)
+        if ($result.PolicyFindings -and $result.PolicyFindings.Count -gt 0) {
+            $severityColors = @{
+                critical = 'var(--danger-color)'
+                high = 'var(--danger-color)'
+                medium = 'var(--warning-color)'
+                low = 'var(--info-color)'
+                info = 'var(--info-color)'
+            }
+            $caPortalBase = "https://entra.microsoft.com/#view/Microsoft_AAD_IAM/ConditionalAccessBlade/~/policyId/"
+            $caSeverityRank = {
+                param($sev)
+                if (-not $sev) { return 0 }
+                switch ($sev.ToLower()) {
+                    'critical' { return 5 }
+                    'high' { return 4 }
+                    'medium' { return 3 }
+                    'low' { return 2 }
+                    default { return 1 }
+                }
+            }
+
+            $findingContent += "<br><br><strong>Conditional Access Policy Analysis:</strong><br>"
+            $findingContent += "<ul>"
+            foreach ($analysis in $result.PolicyFindings) {
+                $policyNameSafe = ConvertTo-HtmlSafe $analysis.DisplayName
+                $policyStateSafe = ConvertTo-HtmlSafe $analysis.State
+                $policyIdSafe = ConvertTo-HtmlSafe $analysis.Id
+                $findingContent += "<li><code>$policyNameSafe</code>"
+                if ($analysis.State) {
+                    $stateColor = if ($analysis.State -eq 'enabled') { 'var(--success-color)' } elseif ($analysis.State -eq 'disabled') { 'var(--danger-color)' } else { 'var(--warning-color)' }
+                    $findingContent += " - <span style='color: $stateColor; font-weight: 600;'>$policyStateSafe</span>"
+                }
+                if ($analysis.Id) {
+                    $policyLink = "$caPortalBase$policyIdSafe"
+                    $findingContent += " <a href='$policyLink' target='_blank' style='margin-left:6px; font-size:12px;'>Open in Entra</a> <span style='color: var(--gray-700); font-size: 12px;'>ID: <code>$policyIdSafe</code></span>"
+                }
+
+                $riskList = @()
+                if ($analysis.Risks) { $riskList = $analysis.Risks | Where-Object { $_ } }
+                $opportunityList = @()
+                if ($analysis.Opportunities) { $opportunityList = $analysis.Opportunities | Where-Object { $_ } }
+
+                if ($riskList.Count -gt 0 -or $opportunityList.Count -gt 0) {
+                    $findingContent += "<br><div style='margin-top:6px;'>"
+                    if ($riskList.Count -gt 0) {
+                        $findingContent += "<div><strong>Risks:</strong><ul style='margin:4px 0 8px 16px;'>"
+                        foreach ($risk in $riskList) {
+                            $riskSafe = ConvertTo-HtmlSafe $risk.Message
+                            $riskSeveritySafe = ConvertTo-HtmlSafe $risk.Severity
+                            $riskColor = $severityColors[$riskSeveritySafe.ToLower()]
+                            if (-not $riskColor) { $riskColor = 'var(--danger-color)' }
+                            $findingContent += "<li style='color: $riskColor;'><strong>${riskSeveritySafe}:</strong> $riskSafe</li>"
+                        }
+                        $findingContent += "</ul></div>"
+                    }
+                    if ($opportunityList.Count -gt 0) {
+                        $findingContent += "<div><strong>Opportunities:</strong><ul style='margin:4px 0 8px 16px;'>"
+                        foreach ($opp in $opportunityList) {
+                            $oppSafe = ConvertTo-HtmlSafe $opp.Message
+                            $oppSeveritySafe = ConvertTo-HtmlSafe $opp.Severity
+                            $oppColor = $severityColors[$oppSeveritySafe.ToLower()]
+                            if (-not $oppColor) { $oppColor = 'var(--warning-color)' }
+                            $findingContent += "<li style='color: $oppColor;'><strong>${oppSeveritySafe}:</strong> $oppSafe</li>"
+                        }
+                        $findingContent += "</ul></div>"
+                    }
+                    $findingContent += "</div>"
+                }
+                else {
+                    $findingContent += "<br><span style='color: var(--gray-700); font-size: 13px;'>No specific risks or opportunities detected.</span>"
+                }
+
+                $findingContent += "</li>"
+            }
+            $findingContent += "</ul>"
+
+            if ($result.PolicyFindingsSummary -and (($result.PolicyFindingsSummary.Risks.Count -gt 0) -or ($result.PolicyFindingsSummary.Opportunities.Count -gt 0))) {
+                $findingContent += "<br><strong>Cross-policy highlights (deduped):</strong><br>"
+                if ($result.PolicyFindingsSummary.Risks.Count -gt 0) {
+                    $findingContent += "<div style='margin-top:4px;'><strong>Risks:</strong><ul style='margin:4px 0 8px 16px;'>"
+                    foreach ($summaryRisk in ($result.PolicyFindingsSummary.Risks | Sort-Object @{Expression={& $caSeverityRank $_.Severity};Descending=$true}, @{Expression={$_.Count};Descending=$true})) {
+                        $riskMsgSafe = ConvertTo-HtmlSafe $summaryRisk.Message
+                        $riskSeveritySafe = ConvertTo-HtmlSafe $summaryRisk.Severity
+                        $riskColor = $severityColors[$riskSeveritySafe.ToLower()]
+                        if (-not $riskColor) { $riskColor = 'var(--danger-color)' }
+                        $countSafe = ConvertTo-HtmlSafe $summaryRisk.Count
+                        $findingContent += "<li style='color: $riskColor;'><strong>$riskSeveritySafe</strong> ($countSafe policy/policies): $riskMsgSafe</li>"
+                    }
+                    $findingContent += "</ul></div>"
+                }
+                if ($result.PolicyFindingsSummary.Opportunities.Count -gt 0) {
+                    $findingContent += "<div style='margin-top:4px;'><strong>Opportunities:</strong><ul style='margin:4px 0 8px 16px;'>"
+                    foreach ($summaryOpp in ($result.PolicyFindingsSummary.Opportunities | Sort-Object @{Expression={& $caSeverityRank $_.Severity};Descending=$true}, @{Expression={$_.Count};Descending=$true})) {
+                        $oppMsgSafe = ConvertTo-HtmlSafe $summaryOpp.Message
+                        $oppSeveritySafe = ConvertTo-HtmlSafe $summaryOpp.Severity
+                        $oppColor = $severityColors[$oppSeveritySafe.ToLower()]
+                        if (-not $oppColor) { $oppColor = 'var(--warning-color)' }
+                        $countSafe = ConvertTo-HtmlSafe $summaryOpp.Count
+                        $findingContent += "<li style='color: $oppColor;'><strong>$oppSeveritySafe</strong> ($countSafe policy/policies): $oppMsgSafe</li>"
+                    }
+                    $findingContent += "</ul></div>"
+                }
+            }
         }
         
         # Handle privileged accounts from Privileged Account Security
