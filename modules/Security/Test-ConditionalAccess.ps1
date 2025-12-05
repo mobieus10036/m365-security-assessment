@@ -305,6 +305,15 @@ function Test-ConditionalAccess {
             PolicyFindings = $policyFindings
             PolicyFindingsSummary = $policyFindingsSummary
             ConditionalAccessScore = $caScore
+            # Structured findings for display (array format for list rendering)
+            Findings = $issues | ForEach-Object {
+                [PSCustomObject]@{
+                    Message = $_.Message
+                    Severity = $_.Severity
+                }
+            }
+            # Recommendations as array for bullet list display
+            Recommendations = $recommendations
             Recommendation = if ($recommendations.Count -gt 0) {
                 $recommendations -join ". "
             } else {

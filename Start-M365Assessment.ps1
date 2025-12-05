@@ -678,6 +678,41 @@ function Export-HTMLReport {
             $findingContent += "<br><br><strong>Conditional Access Posture Score:</strong> $scoreSafe% of policies have no flagged risks"
         }
 
+        # Handle structured Conditional Access Findings (security posture issues)
+        if ($result.CheckName -eq "Conditional Access Policies" -and $result.Findings -and $result.Findings.Count -gt 0) {
+            $findingContent += "<br><br><strong>Security Posture Issues ($($result.Findings.Count)):</strong>"
+            $findingContent += "<table style='width: 100%; margin-top: 10px; border-collapse: collapse; font-size: 13px;'>"
+            $findingContent += "<tr style='background: var(--gray-100); font-weight: 600;'><td style='padding: 8px; border: 1px solid var(--gray-300); width: 100px;'>Severity</td><td style='padding: 8px; border: 1px solid var(--gray-300);'>Issue</td></tr>"
+            
+            # Sort by severity (Critical > High > Medium > Low)
+            $severityOrder = @{ 'Critical' = 1; 'High' = 2; 'Medium' = 3; 'Low' = 4 }
+            $sortedFindings = $result.Findings | Sort-Object { $severityOrder[$_.Severity] }
+            
+            foreach ($finding in $sortedFindings) {
+                $findingMsgSafe = ConvertTo-HtmlSafe $finding.Message
+                $findingSeveritySafe = ConvertTo-HtmlSafe $finding.Severity
+                $severityColor = switch ($finding.Severity) {
+                    'Critical' { 'var(--danger-color)' }
+                    'High' { '#d13438' }
+                    'Medium' { '#ffb900' }
+                    'Low' { '#0078d4' }
+                    default { 'var(--gray-700)' }
+                }
+                $severityBg = switch ($finding.Severity) {
+                    'Critical' { '#fde7e9' }
+                    'High' { '#fde7e9' }
+                    'Medium' { '#fff4ce' }
+                    'Low' { '#deecf9' }
+                    default { 'var(--gray-100)' }
+                }
+                $findingContent += "<tr>"
+                $findingContent += "<td style='padding: 8px; border: 1px solid var(--gray-300); background: $severityBg; color: $severityColor; font-weight: 600; text-align: center;'>$findingSeveritySafe</td>"
+                $findingContent += "<td style='padding: 8px; border: 1px solid var(--gray-300);'>$findingMsgSafe</td>"
+                $findingContent += "</tr>"
+            }
+            $findingContent += "</table>"
+        }
+
         # Handle per-policy Conditional Access analysis (risks/opportunities)
         if ($result.PolicyFindings -and $result.PolicyFindings.Count -gt 0) {
             $severityColors = @{
@@ -801,6 +836,20 @@ function Export-HTMLReport {
             $findingContent += "</table>"
         }
         
+        # Build structured recommendations for Conditional Access
+        $recommendationContent = $recommendationSafe
+        if ($result.CheckName -eq "Conditional Access Policies" -and $result.Recommendations -and $result.Recommendations.Count -gt 0) {
+            $recommendationContent = "<strong>Actionable Recommendations ($($result.Recommendations.Count)):</strong>"
+            $recommendationContent += "<ol style='margin: 10px 0 0 0; padding-left: 20px;'>"
+            $recNumber = 1
+            foreach ($rec in $result.Recommendations) {
+                $recSafe = ConvertTo-HtmlSafe $rec
+                $recommendationContent += "<li style='margin-bottom: 8px; line-height: 1.5;'>$recSafe</li>"
+                $recNumber++
+            }
+            $recommendationContent += "</ol>"
+        }
+        
         # Build finding card HTML
         $resultsHtml += @"
 <div class="finding-card" data-status="$statusClass">
@@ -821,7 +870,7 @@ function Export-HTMLReport {
         </div>
         <div class="finding-section">
             <div class="finding-label">Recommendation</div>
-            <div class="finding-content">$recommendationSafe</div>
+            <div class="finding-content">$recommendationContent</div>
         </div>
         <div class="finding-section">
             <a href="$docUrlSafe" target="_blank" class="doc-link">
