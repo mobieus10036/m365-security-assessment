@@ -248,7 +248,11 @@ function Connect-M365Services {
             'Policy.Read.All',
             'Organization.Read.All',
             'AuditLog.Read.All',
-            'UserAuthenticationMethod.Read.All'
+            'UserAuthenticationMethod.Read.All',
+            'SecurityEvents.Read.All',           # For Secure Score
+            'Application.Read.All',              # For App Permissions audit
+            'DelegatedPermissionGrant.Read.All', # For OAuth2 permission grants
+            'SharePointTenantSettings.Read.All'  # For External Sharing settings
         )
         
         if ($TenantId) {
@@ -343,10 +347,13 @@ function Get-ModulesToRun {
     
     $moduleScripts = @{
         'Security' = @(
+            'Security\Test-SecureScore.ps1',
             'Security\Test-MFAConfiguration.ps1',
             'Security\Test-ConditionalAccess.ps1',
             'Security\Test-PrivilegedAccounts.ps1',
-            'Security\Test-LegacyAuth.ps1'
+            'Security\Test-LegacyAuth.ps1',
+            'Security\Test-AppPermissions.ps1',
+            'Security\Test-ExternalSharing.ps1'
         )
         'Exchange' = @(
             'Exchange\Test-EmailSecurity.ps1',
@@ -527,6 +534,26 @@ function Export-Results {
                 Export-Csv -Path $usersWithoutMFACsvPath -NoTypeInformation -Encoding UTF8
             Write-Success "Users without MFA CSV: $usersWithoutMFACsvPath"
             Write-Info "  → $($mfaResult.UsersWithoutMFA.Count) user(s) without MFA exported"
+        }
+
+        # Export risky applications to separate CSV
+        $appResult = $script:AssessmentResults | Where-Object { $_.CheckName -eq "Application Permission Audit" -and $_.RiskyApps }
+        if ($appResult -and $appResult.RiskyApps.Count -gt 0) {
+            $riskyAppsCsvPath = Join-Path $OutputPath "$($baseFileName)_RiskyApplications.csv"
+            $appResult.RiskyApps | Select-Object DisplayName, AppId, Type, @{Name='RiskReasons';Expression={$_.RiskReasons -join '; '}}, @{Name='HighRiskPermissions';Expression={$_.HighRiskPermissions -join '; '}}, LastSignIn | 
+                Export-Csv -Path $riskyAppsCsvPath -NoTypeInformation -Encoding UTF8
+            Write-Success "Risky applications CSV: $riskyAppsCsvPath"
+            Write-Info "  → $($appResult.RiskyApps.Count) risky application(s) exported"
+        }
+
+        # Export Secure Score improvement actions to separate CSV
+        $secureScoreResult = $script:AssessmentResults | Where-Object { $_.CheckName -eq "Microsoft Secure Score" -and $_.TopActions }
+        if ($secureScoreResult -and $secureScoreResult.TopActions.Count -gt 0) {
+            $secureScoreCsvPath = Join-Path $OutputPath "$($baseFileName)_SecureScoreActions.csv"
+            $secureScoreResult.TopActions | Select-Object Title, Category, ScoreInPercentage, ImplementationStatus | 
+                Export-Csv -Path $secureScoreCsvPath -NoTypeInformation -Encoding UTF8
+            Write-Success "Secure Score actions CSV: $secureScoreCsvPath"
+            Write-Info "  → $($secureScoreResult.TopActions.Count) improvement action(s) exported"
         }
     }
 
@@ -853,6 +880,124 @@ function Export-HTMLReport {
                 $findingContent += "<td style='padding: 8px; border: 1px solid var(--gray-300); font-size: 12px;'>$rolesSafe</td>"
                 $findingContent += "<td style='padding: 8px; border: 1px solid var(--gray-300); color: $mfaColor; font-weight: 600;'>$mfaIcon</td></tr>"
             }
+            $findingContent += "</table>"
+        }
+        
+        # Handle Microsoft Secure Score details
+        if ($result.SecureScore -and $result.MaxScore) {
+            $scorePercent = [math]::Round(($result.SecureScore / $result.MaxScore) * 100, 1)
+            $scoreColor = if ($scorePercent -ge 80) { 'var(--success-color)' } elseif ($scorePercent -ge 60) { 'var(--warning-color)' } else { 'var(--danger-color)' }
+            $findingContent += "<br><br><div style='text-align: center; padding: 20px; background: var(--gray-100); border-radius: 8px;'>"
+            $findingContent += "<div style='font-size: 48px; font-weight: 700; color: $scoreColor;'>$($result.SecureScore) / $($result.MaxScore)</div>"
+            $findingContent += "<div style='font-size: 18px; color: var(--gray-700); margin-top: 4px;'>Secure Score ($scorePercent%)</div>"
+            $findingContent += "</div>"
+            
+            # Show category breakdown if available
+            if ($result.CategoryBreakdown -and $result.CategoryBreakdown.Count -gt 0) {
+                $findingContent += "<br><strong>Score by Category:</strong><br>"
+                $findingContent += "<table style='width: 100%; margin-top: 10px; border-collapse: collapse; font-size: 13px;'>"
+                $findingContent += "<tr style='background: var(--gray-100); font-weight: 600;'><td style='padding: 8px; border: 1px solid var(--gray-300);'>Category</td><td style='padding: 8px; border: 1px solid var(--gray-300);'>Score</td><td style='padding: 8px; border: 1px solid var(--gray-300);'>Max</td><td style='padding: 8px; border: 1px solid var(--gray-300);'>%</td></tr>"
+                foreach ($cat in $result.CategoryBreakdown) {
+                    $catNameSafe = ConvertTo-HtmlSafe $cat.Category
+                    $catPct = if ($cat.MaxScore -gt 0) { [math]::Round(($cat.Score / $cat.MaxScore) * 100, 0) } else { 0 }
+                    $catColor = if ($catPct -ge 80) { 'var(--success-color)' } elseif ($catPct -ge 60) { 'var(--warning-color)' } else { 'var(--danger-color)' }
+                    $findingContent += "<tr><td style='padding: 8px; border: 1px solid var(--gray-300);'>$catNameSafe</td>"
+                    $findingContent += "<td style='padding: 8px; border: 1px solid var(--gray-300);'>$($cat.Score)</td>"
+                    $findingContent += "<td style='padding: 8px; border: 1px solid var(--gray-300);'>$($cat.MaxScore)</td>"
+                    $findingContent += "<td style='padding: 8px; border: 1px solid var(--gray-300); color: $catColor; font-weight: 600;'>$catPct%</td></tr>"
+                }
+                $findingContent += "</table>"
+            }
+            
+            # Show top improvement actions
+            if ($result.TopActions -and $result.TopActions.Count -gt 0) {
+                $findingContent += "<br><strong>Top Improvement Actions ($($result.TopActions.Count)):</strong><br>"
+                $findingContent += "<table style='width: 100%; margin-top: 10px; border-collapse: collapse; font-size: 13px;'>"
+                $findingContent += "<tr style='background: var(--gray-100); font-weight: 600;'><td style='padding: 8px; border: 1px solid var(--gray-300);'>Action</td><td style='padding: 8px; border: 1px solid var(--gray-300);'>Category</td><td style='padding: 8px; border: 1px solid var(--gray-300);'>Points</td></tr>"
+                foreach ($action in $result.TopActions) {
+                    $actionTitleSafe = ConvertTo-HtmlSafe $action.Title
+                    $actionCatSafe = ConvertTo-HtmlSafe $action.Category
+                    $actionPoints = $action.ScoreInPercentage
+                    $findingContent += "<tr><td style='padding: 8px; border: 1px solid var(--gray-300);'>$actionTitleSafe</td>"
+                    $findingContent += "<td style='padding: 8px; border: 1px solid var(--gray-300);'>$actionCatSafe</td>"
+                    $findingContent += "<td style='padding: 8px; border: 1px solid var(--gray-300); color: var(--info-color); font-weight: 600;'>+$actionPoints</td></tr>"
+                }
+                $findingContent += "</table>"
+            }
+        }
+        
+        # Handle Risky Apps from Application Permission Audit
+        if ($result.RiskyApps -and $result.RiskyApps.Count -gt 0) {
+            $findingContent += "<br><br><strong>Risky Applications ($($result.RiskyApps.Count)):</strong><br>"
+            $findingContent += "<table style='width: 100%; margin-top: 10px; border-collapse: collapse; font-size: 13px;'>"
+            $findingContent += "<tr style='background: var(--gray-100); font-weight: 600;'><td style='padding: 8px; border: 1px solid var(--gray-300);'>Application</td><td style='padding: 8px; border: 1px solid var(--gray-300);'>Type</td><td style='padding: 8px; border: 1px solid var(--gray-300);'>Risk Reasons</td><td style='padding: 8px; border: 1px solid var(--gray-300);'>High-Risk Permissions</td></tr>"
+            $displayCount = [Math]::Min(15, $result.RiskyApps.Count)
+            for ($i = 0; $i -lt $displayCount; $i++) {
+                $app = $result.RiskyApps[$i]
+                $appNameSafe = ConvertTo-HtmlSafe $app.DisplayName
+                $appTypeSafe = ConvertTo-HtmlSafe $app.Type
+                $riskReasonsSafe = ($app.RiskReasons | ForEach-Object { ConvertTo-HtmlSafe $_ }) -join '<br>'
+                $permsSafe = ($app.HighRiskPermissions | ForEach-Object { ConvertTo-HtmlSafe $_ }) -join ', '
+                if (-not $permsSafe) { $permsSafe = '-' }
+                $findingContent += "<tr><td style='padding: 8px; border: 1px solid var(--gray-300);'><code>$appNameSafe</code></td>"
+                $findingContent += "<td style='padding: 8px; border: 1px solid var(--gray-300);'>$appTypeSafe</td>"
+                $findingContent += "<td style='padding: 8px; border: 1px solid var(--gray-300); color: var(--danger-color);'>$riskReasonsSafe</td>"
+                $findingContent += "<td style='padding: 8px; border: 1px solid var(--gray-300); font-size: 11px;'>$permsSafe</td></tr>"
+            }
+            if ($result.RiskyApps.Count -gt 15) {
+                $findingContent += "<tr><td colspan='4' style='padding: 8px; border: 1px solid var(--gray-300); font-style: italic; text-align: center;'>...and $($result.RiskyApps.Count - 15) more apps (see CSV export)</td></tr>"
+            }
+            $findingContent += "</table>"
+        }
+        
+        # Handle External Sharing configuration details
+        if ($result.SharingCapability) {
+            $findingContent += "<br><br><strong>SharePoint/OneDrive External Sharing Configuration:</strong><br>"
+            $findingContent += "<table style='width: 100%; margin-top: 10px; border-collapse: collapse; font-size: 13px;'>"
+            $findingContent += "<tr style='background: var(--gray-100); font-weight: 600;'><td style='padding: 8px; border: 1px solid var(--gray-300);'>Setting</td><td style='padding: 8px; border: 1px solid var(--gray-300);'>Value</td></tr>"
+            
+            $sharingCapSafe = ConvertTo-HtmlSafe $result.SharingCapability
+            $sharingColor = switch ($result.SharingCapability) {
+                'Disabled' { 'var(--success-color)' }
+                'ExternalUserSharingOnly' { 'var(--warning-color)' }
+                'ExternalUserAndGuestSharing' { 'var(--warning-color)' }
+                'ExistingExternalUserSharingOnly' { 'var(--info-color)' }
+                default { 'var(--danger-color)' }
+            }
+            $findingContent += "<tr><td style='padding: 8px; border: 1px solid var(--gray-300);'>Sharing Capability</td><td style='padding: 8px; border: 1px solid var(--gray-300); color: $sharingColor; font-weight: 600;'>$sharingCapSafe</td></tr>"
+            
+            if ($null -ne $result.AnonLinksEnabled) {
+                $anonIcon = if ($result.AnonLinksEnabled) { "❌ Enabled" } else { "✅ Disabled" }
+                $anonColor = if ($result.AnonLinksEnabled) { 'var(--danger-color)' } else { 'var(--success-color)' }
+                $findingContent += "<tr><td style='padding: 8px; border: 1px solid var(--gray-300);'>Anonymous Links</td><td style='padding: 8px; border: 1px solid var(--gray-300); color: $anonColor; font-weight: 600;'>$anonIcon</td></tr>"
+            }
+            
+            if ($result.DefaultLinkType) {
+                $linkTypeSafe = ConvertTo-HtmlSafe $result.DefaultLinkType
+                $findingContent += "<tr><td style='padding: 8px; border: 1px solid var(--gray-300);'>Default Link Type</td><td style='padding: 8px; border: 1px solid var(--gray-300);'>$linkTypeSafe</td></tr>"
+            }
+            
+            if ($result.DefaultLinkPermission) {
+                $linkPermSafe = ConvertTo-HtmlSafe $result.DefaultLinkPermission
+                $findingContent += "<tr><td style='padding: 8px; border: 1px solid var(--gray-300);'>Default Link Permission</td><td style='padding: 8px; border: 1px solid var(--gray-300);'>$linkPermSafe</td></tr>"
+            }
+            
+            if ($null -ne $result.RequireAcceptingAccount) {
+                $reqAcctIcon = if ($result.RequireAcceptingAccount) { "✅ Required" } else { "⚠️ Not Required" }
+                $reqAcctColor = if ($result.RequireAcceptingAccount) { 'var(--success-color)' } else { 'var(--warning-color)' }
+                $findingContent += "<tr><td style='padding: 8px; border: 1px solid var(--gray-300);'>Require Accepting Account</td><td style='padding: 8px; border: 1px solid var(--gray-300); color: $reqAcctColor; font-weight: 600;'>$reqAcctIcon</td></tr>"
+            }
+            
+            if ($result.AllowedDomains -and $result.AllowedDomains.Count -gt 0) {
+                $domainsSafe = ($result.AllowedDomains | ForEach-Object { ConvertTo-HtmlSafe $_ }) -join ', '
+                $findingContent += "<tr><td style='padding: 8px; border: 1px solid var(--gray-300);'>Allowed Domains</td><td style='padding: 8px; border: 1px solid var(--gray-300);'>$domainsSafe</td></tr>"
+            }
+            
+            if ($result.BlockedDomains -and $result.BlockedDomains.Count -gt 0) {
+                $blockedSafe = ($result.BlockedDomains | ForEach-Object { ConvertTo-HtmlSafe $_ }) -join ', '
+                $findingContent += "<tr><td style='padding: 8px; border: 1px solid var(--gray-300);'>Blocked Domains</td><td style='padding: 8px; border: 1px solid var(--gray-300);'>$blockedSafe</td></tr>"
+            }
+            
             $findingContent += "</table>"
         }
         
