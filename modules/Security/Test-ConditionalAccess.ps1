@@ -84,6 +84,35 @@ function Test-ConditionalAccess {
         $exclusionOverreach = $caPolicies | Where-Object { (_isEnabled $_) -and (_coversAllUsers $_ $breakGlass) -and (_overbroadExclusions $_ $breakGlass) }
         $staleReportOnly = $caPolicies | Where-Object { _isReportOnlyStale $_ $staleReportOnlyDays }
 
+        # Enhanced security posture checks (Zero Trust essentials)
+        # 1. Device Compliance - require compliant or hybrid-joined devices
+        $deviceCompliance = $caPolicies | Where-Object { (_isEnabled $_) -and (_requiresDeviceCompliance $_) }
+        
+        # 2. User Risk Policy - protect against compromised accounts (distinct from sign-in risk)
+        $userRiskPolicy = $caPolicies | Where-Object { (_isEnabled $_) -and (_handlesUserRisk $_) }
+        
+        # 3. Location-Based Controls - named locations, geo-blocking, trusted networks
+        $locationPolicy = $caPolicies | Where-Object { (_isEnabled $_) -and (_hasLocationControls $_) }
+        $untrustedLocationBlock = $caPolicies | Where-Object { (_isEnabled $_) -and (_blocksUntrustedLocations $_) }
+        
+        # 4. Token Protection - prevent token theft/replay attacks
+        $tokenProtection = $caPolicies | Where-Object { (_isEnabled $_) -and (_hasTokenProtection $_) }
+        
+        # 5. Workload Identity Coverage - service principals and managed identities
+        $workloadIdentityPolicy = $caPolicies | Where-Object { (_isEnabled $_) -and (_coversWorkloadIdentities $_) }
+        
+        # 6. App Protection Policy - MAM/Intune app protection
+        $appProtectionPolicy = $caPolicies | Where-Object { (_isEnabled $_) -and (_requiresAppProtection $_) }
+        
+        # 7. Policy Conflict Detection - identify potentially conflicting policies
+        $policyConflicts = _detectPolicyConflicts $caPolicies
+        
+        # 8. Coverage Gap Analysis - identify unprotected scenarios
+        $coverageGaps = _analyzeCoverageGaps $caPolicies $breakGlass
+        
+        # 9. Guest/External User Controls
+        $guestPolicy = $caPolicies | Where-Object { (_isEnabled $_) -and (_targetsGuestUsers $_) -and (_enforcesMfa $_) }
+
         # Determine status and issues
         $issues = @()
         $status = "Pass"
@@ -148,6 +177,58 @@ function Test-ConditionalAccess {
             $issues += [PSCustomObject]@{ Message = "Report-only policies older than $staleReportOnlyDays days; consider enforcing or retiring"; Severity = "Low" }
         }
 
+        # Enhanced security checks - Zero Trust essentials
+        if (-not $deviceCompliance) {
+            $status = if ($status -eq "Pass") { "Warning" } else { $status }
+            if ($severity -eq "Low") { $severity = "High" }
+            $issues += [PSCustomObject]@{ Message = "No policy requiring device compliance or hybrid Azure AD join"; Severity = "High" }
+        }
+        if (-not $userRiskPolicy) {
+            $status = if ($status -eq "Pass") { "Warning" } else { $status }
+            if ($severity -eq "Low") { $severity = "High" }
+            $issues += [PSCustomObject]@{ Message = "No policy addressing user risk (compromised accounts)"; Severity = "High" }
+        }
+        if (-not $locationPolicy) {
+            $status = if ($status -eq "Pass") { "Warning" } else { $status }
+            if ($severity -eq "Low") { $severity = "Medium" }
+            $issues += [PSCustomObject]@{ Message = "No location-based Conditional Access controls configured"; Severity = "Medium" }
+        }
+        if (-not $untrustedLocationBlock) {
+            $status = if ($status -eq "Pass") { "Warning" } else { $status }
+            if ($severity -eq "Low") { $severity = "Medium" }
+            $issues += [PSCustomObject]@{ Message = "No policy blocking or requiring MFA from untrusted/unknown locations"; Severity = "Medium" }
+        }
+        if (-not $tokenProtection) {
+            $status = if ($status -eq "Pass") { "Warning" } else { $status }
+            if ($severity -eq "Low") { $severity = "Medium" }
+            $issues += [PSCustomObject]@{ Message = "Token protection not enabled (vulnerable to token theft attacks)"; Severity = "Medium" }
+        }
+        if (-not $workloadIdentityPolicy) {
+            $status = if ($status -eq "Pass") { "Warning" } else { $status }
+            if ($severity -eq "Low") { $severity = "Medium" }
+            $issues += [PSCustomObject]@{ Message = "No Conditional Access policy protecting workload identities (service principals)"; Severity = "Medium" }
+        }
+        if (-not $appProtectionPolicy) {
+            $status = if ($status -eq "Pass") { "Warning" } else { $status }
+            if ($severity -eq "Low") { $severity = "Low" }
+            $issues += [PSCustomObject]@{ Message = "No policy requiring approved client apps or app protection"; Severity = "Low" }
+        }
+        if (-not $guestPolicy) {
+            $status = if ($status -eq "Pass") { "Warning" } else { $status }
+            if ($severity -eq "Low") { $severity = "Medium" }
+            $issues += [PSCustomObject]@{ Message = "No policy specifically protecting guest/external user access"; Severity = "Medium" }
+        }
+        if ($policyConflicts.Count -gt 0) {
+            $status = if ($status -eq "Pass") { "Warning" } else { $status }
+            if ($severity -eq "Low") { $severity = "Medium" }
+            $issues += [PSCustomObject]@{ Message = "$($policyConflicts.Count) potential policy conflicts detected"; Severity = "Medium" }
+        }
+        if ($coverageGaps.Count -gt 0) {
+            $status = if ($status -eq "Pass") { "Warning" } else { $status }
+            if ($severity -eq "Low") { $severity = "Medium" }
+            $issues += [PSCustomObject]@{ Message = "Coverage gaps identified: $($coverageGaps -join '; ')"; Severity = "Medium" }
+        }
+
         $message = "$enabledPolicies enabled policies found"
         $policiesWithRisks = ($policyFindings | Where-Object { $_.Risks.Count -gt 0 }).Count
         $policiesConsidered = $policyFindings.Count
@@ -172,6 +253,18 @@ function Test-ConditionalAccess {
         if ($exclusionOverreach) { $recommendations += "Reduce exclusions on all-user policies to break-glass accounts only" }
         if ($staleReportOnly) { $recommendations += "Review report-only policies older than $staleReportOnlyDays days and enforce or retire" }
         if ($enabledPolicies -lt $minPolicies) { $recommendations += "Increase coverage with additional Conditional Access policies per security requirements" }
+        
+        # Enhanced recommendations for Zero Trust controls
+        if (-not $deviceCompliance) { $recommendations += "Implement device compliance policy requiring compliant or hybrid Azure AD joined devices for corporate resource access" }
+        if (-not $userRiskPolicy) { $recommendations += "Add user risk-based policy to block or require password change for medium/high risk users (Identity Protection)" }
+        if (-not $locationPolicy) { $recommendations += "Configure named locations and implement location-based access controls" }
+        if (-not $untrustedLocationBlock) { $recommendations += "Block access or require additional verification from untrusted/unknown locations" }
+        if (-not $tokenProtection) { $recommendations += "Enable token protection (Conditional Access token binding) to prevent token theft attacks" }
+        if (-not $workloadIdentityPolicy) { $recommendations += "Create CA policies for workload identities to protect service principals and managed identities" }
+        if (-not $appProtectionPolicy) { $recommendations += "Require approved client apps or Intune app protection policies for mobile access" }
+        if (-not $guestPolicy) { $recommendations += "Create dedicated CA policy for guest/external users with appropriate MFA and access restrictions" }
+        if ($policyConflicts.Count -gt 0) { $recommendations += "Review and resolve detected policy conflicts to ensure consistent access controls" }
+        if ($coverageGaps.Count -gt 0) { $recommendations += "Address identified coverage gaps: $($coverageGaps -join '; ')" }
 
         return [PSCustomObject]@{
             CheckName = "Conditional Access Policies"
@@ -195,6 +288,17 @@ function Test-ConditionalAccess {
                 SessionGoverned = [bool]$sessionGoverned
                 ExclusionOverreach = [bool]$exclusionOverreach
                 ReportOnlyStale = [bool]$staleReportOnly
+                # Enhanced Zero Trust controls
+                DeviceCompliance = [bool]$deviceCompliance
+                UserRiskPolicy = [bool]$userRiskPolicy
+                LocationControls = [bool]$locationPolicy
+                UntrustedLocationBlocked = [bool]$untrustedLocationBlock
+                TokenProtection = [bool]$tokenProtection
+                WorkloadIdentityProtection = [bool]$workloadIdentityPolicy
+                AppProtectionPolicy = [bool]$appProtectionPolicy
+                GuestUserPolicy = [bool]$guestPolicy
+                PolicyConflicts = $policyConflicts
+                CoverageGaps = $coverageGaps
                 Issues = $issues
             }
             EnabledPolicies = $enabledPolicyList
@@ -212,7 +316,14 @@ function Test-ConditionalAccess {
                 "2. Ensure a tenant-wide MFA/strong auth policy with minimal exclusions (break-glass only)"
                 "3. Add a policy blocking legacy authentication for all users/apps"
                 "4. Add privileged-role protection (MFA/strong auth) and risk-based sign-in controls"
-                "5. Test in Report-only where needed, then enforce and monitor sign-in logs"
+                "5. Configure device compliance requirements (Intune/hybrid join)"
+                "6. Add user risk policy to handle compromised accounts (block or password change)"
+                "7. Set up named locations and location-based access controls"
+                "8. Enable token protection for critical apps"
+                "9. Create workload identity policies for service principals"
+                "10. Configure guest/external user access policies"
+                "11. Review policies for conflicts and coverage gaps"
+                "12. Test in Report-only where needed, then enforce and monitor sign-in logs"
             )
         }
     }
@@ -333,4 +444,306 @@ function _isReportOnlyStale($policy, $staleDays) {
     if (-not $policy.ModifiedDateTime) { return $false }
     $modified = [datetime]$policy.ModifiedDateTime
     return $modified -lt (Get-Date).AddDays(-1 * [int]$staleDays)
+}
+
+# ============================================
+# Enhanced Security Posture Helper Functions
+# ============================================
+
+function _requiresDeviceCompliance($policy) {
+    # Check if policy requires compliant device, hybrid Azure AD join, or approved device
+    $grant = $policy.GrantControls
+    if (-not $grant) { return $false }
+    $controls = @($grant.BuiltInControls | ForEach-Object { $_.ToLower() })
+    return ($controls -contains 'compliantdevice') -or 
+           ($controls -contains 'domainjoineddevice') -or
+           ($controls -contains 'approvedapplication')
+}
+
+function _handlesUserRisk($policy) {
+    # Check if policy handles user risk levels (distinct from sign-in risk)
+    $userRisks = @($policy.Conditions.UserRiskLevels | ForEach-Object { $_.ToLower() })
+    if (-not ($userRisks -contains 'medium' -or $userRisks -contains 'high')) { return $false }
+    
+    $grant = $policy.GrantControls
+    if (-not $grant) { return $false }
+    $controls = @($grant.BuiltInControls | ForEach-Object { $_.ToLower() })
+    $hasAuthStrength = $grant.AuthenticationStrength -and $grant.AuthenticationStrength.Id
+    
+    # User risk should block or require password change
+    return ($controls -contains 'block') -or 
+           ($controls -contains 'passwordchange') -or 
+           ($controls -contains 'mfa') -or 
+           $hasAuthStrength
+}
+
+function _hasLocationControls($policy) {
+    # Check if policy uses location conditions
+    $locations = $policy.Conditions.Locations
+    if (-not $locations) { return $false }
+    
+    $hasInclude = $locations.IncludeLocations -and $locations.IncludeLocations.Count -gt 0
+    $hasExclude = $locations.ExcludeLocations -and $locations.ExcludeLocations.Count -gt 0
+    
+    return $hasInclude -or $hasExclude
+}
+
+function _blocksUntrustedLocations($policy) {
+    # Check if policy blocks or requires MFA from untrusted/all locations
+    $locations = $policy.Conditions.Locations
+    if (-not $locations) { return $false }
+    
+    # Policy should include all locations or specifically target untrusted
+    $includesAllLocations = $locations.IncludeLocations -contains 'All'
+    $includesAllTrusted = $locations.IncludeLocations -contains 'AllTrusted'
+    
+    # Must have grant controls (block or MFA)
+    $grant = $policy.GrantControls
+    if (-not $grant) { return $false }
+    $controls = @($grant.BuiltInControls | ForEach-Object { $_.ToLower() })
+    $hasAuthStrength = $grant.AuthenticationStrength -and $grant.AuthenticationStrength.Id
+    
+    # Either blocks access or requires MFA from non-trusted locations
+    $hasStrongControl = ($controls -contains 'block') -or 
+                        ($controls -contains 'mfa') -or 
+                        $hasAuthStrength
+    
+    # Scenario 1: Includes all locations but excludes trusted (blocks untrusted)
+    $excludesTrusted = $locations.ExcludeLocations -contains 'AllTrusted'
+    
+    # Scenario 2: Only includes all trusted locations (implicitly allows only trusted)
+    return ($includesAllLocations -and $excludesTrusted -and $hasStrongControl) -or
+           ($includesAllLocations -and $hasStrongControl)
+}
+
+function _hasTokenProtection($policy) {
+    # Check if policy enables token protection (Conditional Access token binding)
+    $session = $policy.SessionControls
+    if (-not $session) { return $false }
+    
+    # Token protection is in SessionControls.SecureSignInSession or similar
+    if ($session.SecureSignInSession -and $session.SecureSignInSession.IsEnabled) {
+        return $true
+    }
+    
+    # Also check for continuous access evaluation (related protection)
+    if ($session.ContinuousAccessEvaluation -and 
+        $session.ContinuousAccessEvaluation.Mode -eq 'strictEnforcement') {
+        return $true
+    }
+    
+    return $false
+}
+
+function _coversWorkloadIdentities($policy) {
+    # Check if policy targets service principals / workload identities
+    $clientApps = $policy.Conditions.ClientApplications
+    if (-not $clientApps) { return $false }
+    
+    # Check for service principal coverage
+    $includesSPs = $clientApps.IncludeServicePrincipals -and 
+                   ($clientApps.IncludeServicePrincipals.Count -gt 0 -or 
+                    $clientApps.IncludeServicePrincipals -contains 'All')
+    
+    return $includesSPs
+}
+
+function _requiresAppProtection($policy) {
+    # Check if policy requires approved apps or app protection policy
+    $grant = $policy.GrantControls
+    if (-not $grant) { return $false }
+    $controls = @($grant.BuiltInControls | ForEach-Object { $_.ToLower() })
+    
+    return ($controls -contains 'approvedapplication') -or 
+           ($controls -contains 'compliantapplication')
+}
+
+function _targetsGuestUsers($policy) {
+    # Check if policy specifically targets guest/external users
+    $users = $policy.Conditions.Users
+    if (-not $users) { return $false }
+    
+    # Check for guest user types
+    $includesGuests = $users.IncludeGuestsOrExternalUsers -and 
+                      $users.IncludeGuestsOrExternalUsers.GuestOrExternalUserTypes
+    
+    # Also check if include users contains 'GuestsOrExternalUsers'
+    $includesAll = $users.IncludeUsers -contains 'All'
+    $includesGuestType = $users.IncludeUsers -contains 'GuestsOrExternalUsers'
+    
+    return $includesGuests -or $includesGuestType -or $includesAll
+}
+
+function _detectPolicyConflicts($policies) {
+    # Detect potentially conflicting policies
+    $conflicts = @()
+    $enabledPolicies = @($policies | Where-Object { $_.State -eq 'enabled' })
+    
+    for ($i = 0; $i -lt $enabledPolicies.Count; $i++) {
+        for ($j = $i + 1; $j -lt $enabledPolicies.Count; $j++) {
+            $policy1 = $enabledPolicies[$i]
+            $policy2 = $enabledPolicies[$j]
+            
+            # Check for overlapping scope with conflicting controls
+            $overlap = _policiesOverlap $policy1 $policy2
+            if ($overlap) {
+                $conflict = _hasConflictingControls $policy1 $policy2
+                if ($conflict) {
+                    $conflicts += [PSCustomObject]@{
+                        Policy1 = $policy1.DisplayName
+                        Policy2 = $policy2.DisplayName
+                        ConflictType = $conflict
+                    }
+                }
+            }
+        }
+    }
+    
+    return $conflicts
+}
+
+function _policiesOverlap($policy1, $policy2) {
+    # Check if two policies have overlapping user/app scope
+    $users1 = $policy1.Conditions.Users
+    $users2 = $policy2.Conditions.Users
+    $apps1 = $policy1.Conditions.Applications
+    $apps2 = $policy2.Conditions.Applications
+    
+    # Both target all users
+    $bothAllUsers = ($users1.IncludeUsers -contains 'All') -and 
+                    ($users2.IncludeUsers -contains 'All')
+    
+    # Both target all apps
+    $bothAllApps = ($apps1.IncludeApplications -contains 'All') -and 
+                   ($apps2.IncludeApplications -contains 'All')
+    
+    # Same apps targeted
+    $sameApps = $apps1.IncludeApplications | Where-Object { 
+        $apps2.IncludeApplications -contains $_ 
+    }
+    
+    return $bothAllUsers -or ($bothAllApps -and ($sameApps.Count -gt 0))
+}
+
+function _hasConflictingControls($policy1, $policy2) {
+    # Check if policies have conflicting grant controls
+    $grant1 = $policy1.GrantControls
+    $grant2 = $policy2.GrantControls
+    
+    if (-not $grant1 -or -not $grant2) { return $null }
+    
+    $controls1 = @($grant1.BuiltInControls | ForEach-Object { $_.ToLower() })
+    $controls2 = @($grant2.BuiltInControls | ForEach-Object { $_.ToLower() })
+    
+    # Block vs Allow conflict
+    $oneBlocks = ($controls1 -contains 'block') -and ($controls2 -notcontains 'block')
+    $otherBlocks = ($controls2 -contains 'block') -and ($controls1 -notcontains 'block')
+    
+    if ($oneBlocks -or $otherBlocks) {
+        return "Block vs Allow conflict"
+    }
+    
+    # Different MFA requirements
+    $mfa1 = $controls1 -contains 'mfa'
+    $mfa2 = $controls2 -contains 'mfa'
+    $auth1 = $grant1.AuthenticationStrength -and $grant1.AuthenticationStrength.Id
+    $auth2 = $grant2.AuthenticationStrength -and $grant2.AuthenticationStrength.Id
+    
+    if (($mfa1 -or $auth1) -and -not ($mfa2 -or $auth2)) {
+        return "Inconsistent MFA requirements"
+    }
+    
+    return $null
+}
+
+function _analyzeCoverageGaps($policies, $breakGlass) {
+    # Identify gaps in policy coverage
+    $gaps = @()
+    $enabledPolicies = @($policies | Where-Object { $_.State -eq 'enabled' })
+    
+    if ($enabledPolicies.Count -eq 0) {
+        $gaps += "No enabled policies"
+        return $gaps
+    }
+    
+    # Check for browser vs mobile app coverage
+    $browserPolicies = $enabledPolicies | Where-Object {
+        $clientApps = @($_.Conditions.ClientAppTypes)
+        ($clientApps.Count -eq 0) -or ($clientApps -contains 'browser') -or ($clientApps -contains 'all')
+    }
+    $mobileAppPolicies = $enabledPolicies | Where-Object {
+        $clientApps = @($_.Conditions.ClientAppTypes)
+        ($clientApps.Count -eq 0) -or ($clientApps -contains 'mobileAppsAndDesktopClients') -or ($clientApps -contains 'all')
+    }
+    
+    if ($browserPolicies.Count -eq 0) {
+        $gaps += "No policies covering browser access"
+    }
+    if ($mobileAppPolicies.Count -eq 0) {
+        $gaps += "No policies covering mobile/desktop apps"
+    }
+    
+    # Check for platform coverage
+    $windowsPolicies = $enabledPolicies | Where-Object {
+        $platforms = $_.Conditions.Platforms
+        (-not $platforms) -or 
+        ($platforms.IncludePlatforms -contains 'all') -or 
+        ($platforms.IncludePlatforms -contains 'windows')
+    }
+    $iosPolicies = $enabledPolicies | Where-Object {
+        $platforms = $_.Conditions.Platforms
+        (-not $platforms) -or 
+        ($platforms.IncludePlatforms -contains 'all') -or 
+        ($platforms.IncludePlatforms -contains 'iOS')
+    }
+    $androidPolicies = $enabledPolicies | Where-Object {
+        $platforms = $_.Conditions.Platforms
+        (-not $platforms) -or 
+        ($platforms.IncludePlatforms -contains 'all') -or 
+        ($platforms.IncludePlatforms -contains 'android')
+    }
+    $macPolicies = $enabledPolicies | Where-Object {
+        $platforms = $_.Conditions.Platforms
+        (-not $platforms) -or 
+        ($platforms.IncludePlatforms -contains 'all') -or 
+        ($platforms.IncludePlatforms -contains 'macOS')
+    }
+    $linuxPolicies = $enabledPolicies | Where-Object {
+        $platforms = $_.Conditions.Platforms
+        (-not $platforms) -or 
+        ($platforms.IncludePlatforms -contains 'all') -or 
+        ($platforms.IncludePlatforms -contains 'linux')
+    }
+    
+    # Only flag if explicitly excluding platforms without coverage
+    $platformGaps = @()
+    if ($windowsPolicies.Count -eq 0) { $platformGaps += "Windows" }
+    if ($iosPolicies.Count -eq 0) { $platformGaps += "iOS" }
+    if ($androidPolicies.Count -eq 0) { $platformGaps += "Android" }
+    if ($macPolicies.Count -eq 0) { $platformGaps += "macOS" }
+    if ($linuxPolicies.Count -eq 0) { $platformGaps += "Linux" }
+    
+    if ($platformGaps.Count -gt 0) {
+        $gaps += "Platform gaps: $($platformGaps -join ', ')"
+    }
+    
+    # Check for O365 apps not covered
+    $o365Apps = @(
+        "Office365", 
+        "00000002-0000-0ff1-ce00-000000000000",  # Exchange Online
+        "00000003-0000-0ff1-ce00-000000000000"   # SharePoint Online
+    )
+    
+    $o365Covered = $enabledPolicies | Where-Object {
+        $apps = $_.Conditions.Applications
+        ($apps.IncludeApplications -contains 'All') -or
+        ($apps.IncludeApplications -contains 'Office365') -or
+        ($o365Apps | Where-Object { $apps.IncludeApplications -contains $_ })
+    }
+    
+    if ($o365Covered.Count -eq 0) {
+        $gaps += "Office 365 apps may not be fully covered by CA policies"
+    }
+    
+    return $gaps
 }
